@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions: write-all
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.25.4'
+
+      - name: Build binary
+        run: make build-${{ matrix.goos }}-${{ matrix.goarch }}
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ./build/bb-pr-reviewer-${{ matrix.goos == 'windows' && format('{0}.exe', matrix.goos) || format('{0}-{1}', matrix.goos, matrix.goarch) }}

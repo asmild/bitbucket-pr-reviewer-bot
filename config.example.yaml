@@ -1,0 +1,125 @@
+# PR Reviewer Configuration File
+# This is an example configuration file showing all available options.
+# All values can be overridden by environment variables (which have higher priority).
+#
+# Environment Variable Mapping:
+# - server.port -> PORT
+# - claude.model -> CLAUDE_MODEL
+# - claude.timeout_minutes -> CLAUDE_TIMEOUT_CONFIG
+# - bitbucket.user -> BITBUCKET_USER
+# - bitbucket.token -> BITBUCKET_TOKEN
+# - bitbucket.webhook_secret -> BITBUCKET_WEBHOOK_SECRET
+# - bitbucket.allowed_project_keys -> BITBUCKET_ALLOWED_PROJECT_KEYS (comma-separated)
+# - bitbucket.event_type -> BITBUCKET_EVENT_TYPE
+# - bitbucket.trigger_keyword -> TRIGGER_KEYWORD
+# - templates.directory -> TEMPLATES_DIRECTORY
+# - templates.default -> TEMPLATES_DEFAULT
+# - circuit_breaker.failure_threshold -> CB_FAILURE_THRESHOLD
+# - circuit_breaker.reset_timeout_ms -> CB_RESET_TIMEOUT_MS
+# - metrics.persistence.enabled -> METRICS_PERSISTENCE_ENABLED
+# - metrics.persistence.type -> METRICS_PERSISTENCE_TYPE
+# - metrics.persistence.path -> METRICS_PERSISTENCE_PATH
+# - metrics.persistence.save_interval_ms -> METRICS_PERSISTENCE_SAVE_INTERVAL_MS
+# - logging.level -> LOG_LEVEL
+# - logging.file_retention_days -> LOG_FILE_RETENTION_DAYS
+# - logging.max_file_size -> LOG_MAX_FILE_SIZE
+# - logging.enable_console -> LOG_ENABLE_CONSOLE
+# - logging.enable_file -> LOG_ENABLE_FILE
+
+# Server configuration
+server:
+  # Server port (default: 8080)
+  port: 8080
+
+# Claude AI configuration
+claude:
+  # Model to use (default: sonnet)
+  # Available: "opus", "sonnet", "haiku"
+  model: sonnet
+  # Timeout for Claude CLI execution in minutes (default: 10)
+  timeout_minutes: 10
+
+# Bitbucket Data Center configuration
+bitbucket:
+  # Bitbucket username (required)
+  user: ""
+  # Bitbucket app password or personal access token (required)
+  token: ""
+  # Webhook secret for HMAC signature validation (optional)
+  webhook_secret: ""
+  # Allowed project keys (optional - if empty, accepts all projects)
+  # Only PRs from these projects will be processed
+  # Can be a single project or multiple projects
+  allowed_project_keys:
+    - PROJ1
+    - PROJ2
+  # Or for a single project: allowed_project_keys: ["PROJ1"]
+  # Or to accept all: allowed_project_keys: []
+  # Event type to process: "pr_opened" or "comment_added" (default: comment_added)
+  # - pr_opened: Automatically review when PR is opened
+  # - comment_added: Review only when comment mentions user and contains trigger keyword
+  event_type: "comment_added"
+  # Trigger keyword for comment_added events (default: /review)
+  # Only used when event_type is "comment_added"
+  trigger_keyword: "/review"
+
+# Templates configuration
+templates:
+  # Base directory where template folders are located (default: ./templates)
+  directory: ./templates
+  # Default template folder name (default: default)
+  default: default
+  # Per-project template configurations (optional)
+  # Each project can have:
+  # 1. template: applies to all repositories in the project
+  # 2. repositories: per-repository overrides for specific repos
+  projects:
+    CI:
+      # Template applied to all repos in CI project
+      template: custom
+      repositories:
+        # Override for specific repository in CI project
+        critical-repo: critical-review
+        important-repo: important-review
+    INFRA:
+      template: infrastructure-review
+      repositories:
+        network-config: security-review
+    DEV:
+      # Can have just per-repo overrides without project-level template
+      repositories:
+        experimental: lenient-review
+
+# Circuit breaker configuration
+# Implements fault tolerance pattern
+circuit_breaker:
+  # Number of failures before circuit opens (default: 3)
+  failure_threshold: 3
+  # Timeout in milliseconds before attempting to reset (default: 30000)
+  reset_timeout_ms: 30000
+
+# Metrics configuration
+metrics:
+  persistence:
+    # Enable metrics persistence (default: false)
+    enabled: false
+    # Storage type: "filesystem" or "sqlite" (default: filesystem)
+    type: filesystem
+    # Path for metrics storage (default: ./metrics-storage)
+    path: ./metrics-storage
+    # Interval to save metrics in milliseconds (default: 30000)
+    save_interval_ms: 30000
+
+# Logging configuration
+logging:
+  # Log level: "debug", "info", "warn", "error" (default: info)
+  level: info
+  # Number of days to retain log files (default: 30)
+  file_retention_days: 30
+  # Maximum log file size (default: 20m)
+  # Supports: "10m", "100m", "1g", etc.
+  max_file_size: 20m
+  # Enable console logging (default: true)
+  enable_console: true
+  # Enable file logging (default: true)
+  enable_file: true
