@@ -19,7 +19,7 @@ RUN apk add --no-cache git bash ca-certificates && \
 WORKDIR /app
 
 COPY --from=builder /build/bb-pr-reviewer .
-COPY templates ./templates
+COPY profiles ./templates
 
 RUN adduser -D appuser && \
     mkdir -p projects logs metrics-storage && \

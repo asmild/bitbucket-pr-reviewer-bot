@@ -11,6 +11,30 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	// EventTypePROpened triggers review automatically when PR is opened
+	EventTypePROpened = "pr_opened"
+
+	// EventTypeCommentAdded triggers review when comment is added (with trigger keyword)
+	EventTypeCommentAdded = "comment_added"
+)
+
+// AllowedEventTypes contains all valid event types
+var AllowedEventTypes = []string{
+	EventTypePROpened,
+	EventTypeCommentAdded,
+}
+
+// IsValidEventType checks if the given event type is valid
+func IsValidEventType(eventType string) bool {
+	for _, allowed := range AllowedEventTypes {
+		if eventType == allowed {
+			return true
+		}
+	}
+	return false
+}
+
 // Config holds all application configuration
 type Config struct {
 	// Server configuration
@@ -22,8 +46,11 @@ type Config struct {
 	// Bitbucket configuration
 	Bitbucket BitbucketConfig `yaml:"bitbucket"`
 
-	// Templates configuration
-	Templates TemplatesConfig `yaml:"templates"`
+	// Profiles configuration (renamed from Templates)
+	Profiles ProfilesConfig `yaml:"profiles"`
+
+	// Queue configuration
+	Queue QueueConfig `yaml:"queue"`
 
 	// Circuit breaker configuration
 	CircuitBreaker CircuitBreakerConfig `yaml:"circuit_breaker"`
@@ -53,15 +80,20 @@ type BitbucketConfig struct {
 	TriggerKeyword     string   `yaml:"trigger_keyword"`
 }
 
-type TemplatesConfig struct {
+type ProfilesConfig struct {
 	Directory string                    `yaml:"directory"`
 	Default   string                    `yaml:"default"`
-	Projects  map[string]ProjectTemplate `yaml:"projects"`
+	Projects  map[string]ProjectProfile `yaml:"projects"`
 }
 
-type ProjectTemplate struct {
-	Template     string            `yaml:"template"`      // Applied to all repos in this project
+type ProjectProfile struct {
+	Profile      string            `yaml:"profile"`      // Applied to all repos in this project
 	Repositories map[string]string `yaml:"repositories"` // Per-repo overrides
+}
+
+type QueueConfig struct {
+	MaxSize    int `yaml:"max_size"`
+	MaxRetries int `yaml:"max_retries"`
 }
 
 type CircuitBreakerConfig struct {
@@ -136,16 +168,6 @@ func LoadWithPath(configPath string) *Config {
 	return cfg
 }
 
-// getDefaultTemplatesDirectory finds templates directory or returns default
-func getDefaultTemplatesDirectory() string {
-	templatesDir := FindTemplatesDirectory()
-	if templatesDir != "" {
-		return templatesDir
-	}
-	// Fallback to current directory
-	return "./templates"
-}
-
 // getDefaultConfig returns a Config with default values
 func getDefaultConfig() *Config {
 	return &Config{
@@ -158,13 +180,17 @@ func getDefaultConfig() *Config {
 		},
 		Bitbucket: BitbucketConfig{
 			AllowedProjectKeys: []string{},
-			EventType:          "comment_added",
+			EventType:          EventTypeCommentAdded,
 			TriggerKeyword:     "/review",
 		},
-		Templates: TemplatesConfig{
-			Directory: getDefaultTemplatesDirectory(),
+		Profiles: ProfilesConfig{
+			Directory: "./profiles",
 			Default:   "default",
-			Projects:  make(map[string]ProjectTemplate),
+			Projects:  make(map[string]ProjectProfile),
+		},
+		Queue: QueueConfig{
+			MaxSize:    100,
+			MaxRetries: 3,
 		},
 		CircuitBreaker: CircuitBreakerConfig{
 			FailureThreshold: 3,
@@ -238,6 +264,14 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Bitbucket.TriggerKeyword = keyword
 	}
 
+	// Queue overrides
+	if maxSize := getEnvAsInt("QUEUE_MAX_SIZE", 0); maxSize != 0 {
+		cfg.Queue.MaxSize = maxSize
+	}
+	if maxRetries := getEnvAsInt("QUEUE_MAX_RETRIES", 0); maxRetries != 0 {
+		cfg.Queue.MaxRetries = maxRetries
+	}
+
 	// Circuit breaker overrides
 	if threshold := getEnvAsInt("CB_FAILURE_THRESHOLD", 0); threshold != 0 {
 		cfg.CircuitBreaker.FailureThreshold = threshold
@@ -260,18 +294,18 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Metrics.Persistence.SaveIntervalMS = interval
 	}
 
-	// Templates overrides
-	// TEMPLATES_DIRECTORY takes precedence over auto-discovery
-	if directory := os.Getenv("TEMPLATES_DIRECTORY"); directory != "" {
-		cfg.Templates.Directory = directory
-	} else if cfg.Templates.Directory == "./templates" {
-		// If still using default, try to find templates directory
-		if found := FindTemplatesDirectory(); found != "" {
-			cfg.Templates.Directory = found
+	// Profiles overrides
+	// PROFILES_DIRECTORY takes precedence over auto-discovery
+	if directory := os.Getenv("PROFILES_DIRECTORY"); directory != "" {
+		cfg.Profiles.Directory = directory
+	} else if cfg.Profiles.Directory == "./profiles" {
+		// If still using default, try to find profiles directory
+		if found := FindProfilesDirectory(); found != "" {
+			cfg.Profiles.Directory = found
 		}
 	}
-	if defaultTemplate := os.Getenv("TEMPLATES_DEFAULT"); defaultTemplate != "" {
-		cfg.Templates.Default = defaultTemplate
+	if defaultProfile := os.Getenv("PROFILES_DEFAULT"); defaultProfile != "" {
+		cfg.Profiles.Default = defaultProfile
 	}
 
 	// Logging overrides
@@ -300,8 +334,8 @@ func (c *Config) Validate() error {
 	if c.Bitbucket.Token == "" {
 		return &ValidationError{Field: "bitbucket.token", Message: "is required"}
 	}
-	if c.Bitbucket.EventType != "pr_opened" && c.Bitbucket.EventType != "comment_added" {
-		return &ValidationError{Field: "bitbucket.event_type", Message: "must be either 'pr_opened' or 'comment_added'"}
+	if !IsValidEventType(c.Bitbucket.EventType) {
+		return &ValidationError{Field: "bitbucket.event_type", Message: fmt.Sprintf("must be one of: %v", AllowedEventTypes)}
 	}
 	return nil
 }
@@ -355,4 +389,3 @@ func parseCommaSeparated(value string) []string {
 	}
 	return result
 }
-

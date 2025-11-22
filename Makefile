@@ -12,7 +12,7 @@ define build_binary
 	$(eval EXT := $(if $(filter windows,$(GOOS)),.exe,))
 	$(eval LDFLAGS := $(if $(filter windows,$(GOOS)),,-ldflags="-w -s"))
 	$(eval ARCH_SUFFIX := $(if $(filter windows,$(GOOS)),,-$(GOARCH)))
-	$(eval OUTPUT := build/bb-pr-reviewer-$(GOOS)$(ARCH_SUFFIX)$(VERSION_SUFFIX)$(EXT))
+	$(eval OUTPUT := ./bin/bb-pr-reviewer-$(GOOS)$(ARCH_SUFFIX)$(VERSION_SUFFIX)$(EXT))
 	@echo "Building $(OUTPUT)..."
 	@CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(LDFLAGS) -o $(OUTPUT) ./cmd/server/main.go
 endef
@@ -40,7 +40,7 @@ build: build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64
 # Build for local development
 build-local:
 	@echo "Building bb-pr-reviewer for local platform..."
-	@CGO_ENABLED=1 go build -o bb-pr-reviewer ./cmd/server
+	@CGO_ENABLED=1 go build -o ./bin/bb-pr-reviewer ./cmd/server/main.go
 	@echo "Build complete: bb-pr-reviewer"
 
 # Run the application

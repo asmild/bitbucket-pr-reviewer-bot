@@ -1,0 +1,185 @@
+{
+  "eventKey": "pr:opened",
+  "date": "2025-11-21T09:45:44+0000",
+  "actor": {
+    "name": "jsmith",
+    "emailAddress": "john.smith@example.com",
+    "active": true,
+    "displayName": "John Smith",
+    "id": 6706,
+    "slug": "jsmith",
+    "type": "NORMAL",
+    "links": {
+      "self": [
+        {
+          "href": "https://bitbucket.example.com/users/jsmith"
+        }
+      ]
+    }
+  },
+  "pullRequest": {
+    "id": 41,
+    "version": 0,
+    "title": "New super branch",
+    "description": "* super new commit",
+    "state": "OPEN",
+    "open": true,
+    "closed": false,
+    "draft": false,
+    "createdDate": 1763718744695,
+    "updatedDate": 1763718744695,
+    "fromRef": {
+      "id": "refs/heads/new-super-branch",
+      "displayId": "new-super-branch",
+      "latestCommit": "da2d54016638dd1ecd3fd6798c0928a1493f4aef",
+      "type": "BRANCH",
+      "repository": {
+        "slug": "my-repo",
+        "id": 42288,
+        "name": "My Repository",
+        "description": "Test application to debug arm64 amd64 platforms build",
+        "hierarchyId": "dfabfc540c352aa51c4e",
+        "scmId": "git",
+        "state": "AVAILABLE",
+        "statusMessage": "Available",
+        "forkable": true,
+        "project": {
+          "key": "PROJ",
+          "id": 554,
+          "name": "My Project",
+          "public": false,
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/projects/PROJ"
+              }
+            ]
+          }
+        },
+        "public": false,
+        "archived": false,
+        "links": {
+          "clone": [
+            {
+              "href": "https://bitbucket.example.com/scm/proj/my-repo.git",
+              "name": "http"
+            },
+            {
+              "href": "ssh://git@bitbucket.example.com:7999/proj/my-repo.git",
+              "name": "ssh"
+            }
+          ],
+          "self": [
+            {
+              "href": "https://bitbucket.example.com/projects/PROJ/repos/my-repo/browse"
+            }
+          ]
+        }
+      }
+    },
+    "toRef": {
+      "id": "refs/heads/master",
+      "displayId": "master",
+      "latestCommit": "04d1a5c54887d80824e218f523ef64da647dce66",
+      "type": "BRANCH",
+      "repository": {
+        "slug": "my-repo",
+        "id": 42288,
+        "name": "My Repository",
+        "description": "Test application to debug arm64 amd64 platforms build",
+        "hierarchyId": "dfabfc540c352aa51c4e",
+        "scmId": "git",
+        "state": "AVAILABLE",
+        "statusMessage": "Available",
+        "forkable": true,
+        "project": {
+          "key": "PROJ",
+          "id": 554,
+          "name": "My Project",
+          "public": false,
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/projects/PROJ"
+              }
+            ]
+          }
+        },
+        "public": false,
+        "archived": false,
+        "links": {
+          "clone": [
+            {
+              "href": "https://bitbucket.example.com/scm/proj/my-repo.git",
+              "name": "http"
+            },
+            {
+              "href": "ssh://git@bitbucket.example.com:7999/proj/my-repo.git",
+              "name": "ssh"
+            }
+          ],
+          "self": [
+            {
+              "href": "https://bitbucket.example.com/projects/PROJ/repos/my-repo/browse"
+            }
+          ]
+        }
+      }
+    },
+    "locked": false,
+    "author": {
+      "user": {
+        "name": "jsmith",
+        "emailAddress": "john.smith@example.com",
+        "active": true,
+        "displayName": "John Smith",
+        "id": 6706,
+        "slug": "jsmith",
+        "type": "NORMAL",
+        "links": {
+          "self": [
+            {
+              "href": "https://bitbucket.example.com/users/jsmith"
+            }
+          ]
+        }
+      },
+      "role": "AUTHOR",
+      "approved": false,
+      "status": "UNAPPROVED"
+    },
+    "reviewers": [
+      {
+        "user": {
+          "name": "asmith",
+          "emailAddress": "alice.smith@example.com",
+          "active": true,
+          "displayName": "Alice Smith",
+          "id": 7819,
+          "slug": "asmith",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/users/asmith"
+              }
+            ]
+          }
+        },
+        "role": "REVIEWER",
+        "approved": false,
+        "status": "UNAPPROVED"
+      }
+    ],
+    "participants": [],
+    "links": {
+      "self": [
+        {
+          "href": "https://bitbucket.example.com/projects/PROJ/repos/my-repo/pull-requests/41"
+        }
+      ]
+    }
+  }
+}

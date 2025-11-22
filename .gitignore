@@ -5,6 +5,9 @@
 *.so
 *.dylib
 build
+bin
+bb-pr-reviewer
+.claude
 
 # Test binary, built with `go test -c`
 *.test

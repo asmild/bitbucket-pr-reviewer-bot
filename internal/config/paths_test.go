@@ -42,8 +42,8 @@ func TestConfigSearchPaths(t *testing.T) {
 	}
 }
 
-func TestTemplatesSearchPaths(t *testing.T) {
-	paths := TemplatesSearchPaths()
+func TestProfilesSearchPaths(t *testing.T) {
+	paths := ProfilesSearchPaths()
 
 	// Should have at least 2 paths
 	if len(paths) < 2 {
@@ -51,13 +51,13 @@ func TestTemplatesSearchPaths(t *testing.T) {
 	}
 
 	// First path should be current directory
-	expectedFirst := filepath.Join(".", TemplatesDirName)
+	expectedFirst := filepath.Join(".", ProfilesDirName)
 	if paths[0] != expectedFirst {
 		t.Errorf("First path should be %s, got %s", expectedFirst, paths[0])
 	}
 
 	// Last path should be system-wide
-	expectedLast := filepath.Join("/etc", AppName, TemplatesDirName)
+	expectedLast := filepath.Join("/etc", AppName, ProfilesDirName)
 	if paths[len(paths)-1] != expectedLast {
 		t.Errorf("Last path should be %s, got %s", expectedLast, paths[len(paths)-1])
 	}
@@ -72,10 +72,10 @@ func TestFindConfigFile(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	tests := []struct {
-		name          string
-		setup         func() string
-		expectFound   bool
-		expectedPath  string
+		name         string
+		setup        func() string
+		expectFound  bool
+		expectedPath string
 	}{
 		{
 			name: "config in current directory",
@@ -124,10 +124,10 @@ func TestFindConfigFile(t *testing.T) {
 	}
 }
 
-func TestFindTemplatesDirectory(t *testing.T) {
+func TestFindProfilesDirectory(t *testing.T) {
 	// Save and restore environment
-	oldTemplatesDir := os.Getenv("TEMPLATES_DIRECTORY")
-	defer os.Setenv("TEMPLATES_DIRECTORY", oldTemplatesDir)
+	oldProfilesDir := os.Getenv("PROFILES_DIRECTORY")
+	defer os.Setenv("PROFILES_DIRECTORY", oldProfilesDir)
 
 	// Create temporary directory structure
 	tmpDir := t.TempDir()
@@ -139,20 +139,20 @@ func TestFindTemplatesDirectory(t *testing.T) {
 		expectedPath string
 	}{
 		{
-			name: "templates via TEMPLATES_DIRECTORY env var",
+			name: "profiles via PROFILES_DIRECTORY env var",
 			setup: func() string {
-				templatesPath := filepath.Join(tmpDir, "custom-templates")
-				os.MkdirAll(templatesPath, 0755)
-				os.Setenv("TEMPLATES_DIRECTORY", templatesPath)
-				return templatesPath
+				profilesPath := filepath.Join(tmpDir, "custom-profiles")
+				os.MkdirAll(profilesPath, 0755)
+				os.Setenv("PROFILES_DIRECTORY", profilesPath)
+				return profilesPath
 			},
 			expectFound:  true,
-			expectedPath: filepath.Join(tmpDir, "custom-templates"),
+			expectedPath: filepath.Join(tmpDir, "custom-profiles"),
 		},
 		{
 			name: "non-existent env var path",
 			setup: func() string {
-				os.Setenv("TEMPLATES_DIRECTORY", "/nonexistent/path")
+				os.Setenv("PROFILES_DIRECTORY", "/nonexistent/path")
 				return ""
 			},
 			expectFound: false,
@@ -165,11 +165,11 @@ func TestFindTemplatesDirectory(t *testing.T) {
 			expectedPath := tt.setup()
 
 			// Test
-			result := FindTemplatesDirectory()
+			result := FindProfilesDirectory()
 
 			if tt.expectFound {
 				if result == "" {
-					t.Error("Expected to find templates directory but got empty string")
+					t.Error("Expected to find profiles directory but got empty string")
 				}
 				if expectedPath != "" && result != expectedPath {
 					t.Errorf("Expected path %s, got %s", expectedPath, result)
@@ -177,45 +177,7 @@ func TestFindTemplatesDirectory(t *testing.T) {
 			}
 
 			// Cleanup
-			os.Unsetenv("TEMPLATES_DIRECTORY")
-		})
-	}
-}
-
-func TestGetConfigDirectory(t *testing.T) {
-	tests := []struct {
-		name       string
-		configPath string
-		expected   string
-	}{
-		{
-			name:       "empty path",
-			configPath: "",
-			expected:   "",
-		},
-		{
-			name:       "current directory",
-			configPath: "./config.yaml",
-			expected:   ".",
-		},
-		{
-			name:       "absolute path",
-			configPath: "/etc/bitbucket-pr-reviewer/config.yaml",
-			expected:   "/etc/bitbucket-pr-reviewer",
-		},
-		{
-			name:       "relative path with subdirectory",
-			configPath: "configs/app/config.yaml",
-			expected:   "configs/app",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := GetConfigDirectory(tt.configPath)
-			if result != tt.expected {
-				t.Errorf("Expected %s, got %s", tt.expected, result)
-			}
+			os.Unsetenv("PROFILES_DIRECTORY")
 		})
 	}
 }
@@ -229,8 +191,8 @@ func TestConstants(t *testing.T) {
 		t.Error("ConfigFileName should not be empty")
 	}
 
-	if TemplatesDirName == "" {
-		t.Error("TemplatesDirName should not be empty")
+	if ProfilesDirName == "" {
+		t.Error("ProfilesDirName should not be empty")
 	}
 
 	// Verify expected values
@@ -244,8 +206,8 @@ func TestConstants(t *testing.T) {
 		t.Errorf("Expected ConfigFileName to be %s, got %s", expectedConfigFileName, ConfigFileName)
 	}
 
-	expectedTemplatesDirName := "templates"
-	if TemplatesDirName != expectedTemplatesDirName {
-		t.Errorf("Expected TemplatesDirName to be %s, got %s", expectedTemplatesDirName, TemplatesDirName)
+	expectedProfilesDirName := "profiles"
+	if ProfilesDirName != expectedProfilesDirName {
+		t.Errorf("Expected ProfilesDirName to be %s, got %s", expectedProfilesDirName, ProfilesDirName)
 	}
 }

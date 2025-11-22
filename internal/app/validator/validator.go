@@ -1,0 +1,354 @@
+package validator
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/config"
+	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/ports"
+)
+
+// ValidationError represents a startup validation error
+type ValidationError struct {
+	Component string
+	Issue     string
+	Solution  string
+}
+
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("%s: %s\n  Solution: %s", e.Component, e.Issue, e.Solution)
+}
+
+// ValidationResult holds all validation errors and info messages
+type ValidationResult struct {
+	Errors   []*ValidationError
+	InfoMsgs []string
+}
+
+// IsValid returns true if there are no validation errors
+func (r *ValidationResult) IsValid() bool {
+	return len(r.Errors) == 0
+}
+
+// AddError adds a validation error
+func (r *ValidationResult) AddError(component, issue, solution string) {
+	r.Errors = append(r.Errors, &ValidationError{
+		Component: component,
+		Issue:     issue,
+		Solution:  solution,
+	})
+}
+
+// AddInfo adds an informational message
+func (r *ValidationResult) AddInfo(msg string) {
+	r.InfoMsgs = append(r.InfoMsgs, msg)
+}
+
+// LogResults logs all validation results using the provided logger
+func (r *ValidationResult) LogResults(logger ports.Logger) {
+	// Log info messages
+	for _, msg := range r.InfoMsgs {
+		logger.Info(msg)
+	}
+
+	// Log errors if any
+	if !r.IsValid() {
+		logger.Error("Startup Dependencies Check Failed")
+		logger.Error("")
+
+		for i, err := range r.Errors {
+			logger.Error(fmt.Sprintf("%d. %s", i+1, err.Error()))
+			logger.Error("")
+		}
+
+		logger.Error("Please fix the above issues and restart the application.")
+	}
+}
+
+// ValidateStartup checks all startup dependencies and requirements
+func ValidateStartup(cfg *config.Config, logger ports.Logger) *ValidationResult {
+	result := &ValidationResult{}
+
+	logger.Info("Running startup dependency checks...")
+
+	// Check configuration
+	validateConfiguration(cfg, result)
+
+	// Check external dependencies
+	validateClaudeCLI(result)
+	validateGit(result)
+
+	// Check profiles (templates)
+	validateProfiles(cfg, result, logger)
+
+	// Check directory permissions
+	validateDirectories(cfg, result)
+
+	return result
+}
+
+// validateConfiguration checks required configuration values
+func validateConfiguration(cfg *config.Config, result *ValidationResult) {
+	if cfg.Bitbucket.User == "" {
+		result.AddError(
+			"Configuration",
+			"Bitbucket username is not configured",
+			"Set BITBUCKET_USER environment variable or bitbucket.user in config.yaml",
+		)
+	}
+
+	if cfg.Bitbucket.Token == "" {
+		result.AddError(
+			"Configuration",
+			"Bitbucket token is not configured",
+			"Set BITBUCKET_TOKEN environment variable or bitbucket.token in config.yaml",
+		)
+	}
+
+	if !config.IsValidEventType(cfg.Bitbucket.EventType) {
+		result.AddError(
+			"Configuration",
+			fmt.Sprintf("Invalid event_type: %s", cfg.Bitbucket.EventType),
+			fmt.Sprintf("Set bitbucket.event_type to one of: %v", config.AllowedEventTypes),
+		)
+	}
+
+	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
+		result.AddError(
+			"Configuration",
+			fmt.Sprintf("Invalid server port: %d", cfg.Server.Port),
+			"Set PORT environment variable or server.port in config.yaml to a valid port number (1-65535)",
+		)
+	}
+
+	if cfg.Claude.TimeoutMinutes < 1 {
+		result.AddError(
+			"Configuration",
+			fmt.Sprintf("Invalid Claude timeout: %d minutes", cfg.Claude.TimeoutMinutes),
+			"Set claude.timeout_minutes to a positive value (recommended: 5-30 minutes)",
+		)
+	}
+}
+
+// validateClaudeCLI checks if Claude CLI is installed and accessible
+func validateClaudeCLI(result *ValidationResult) {
+	// Check if claude command exists
+	_, err := exec.LookPath("claude")
+	if err != nil {
+		result.AddError(
+			"Claude CLI",
+			"Claude CLI is not installed or not in PATH",
+			"Install Claude CLI from https://docs.anthropic.com/en/docs/claude-code",
+		)
+		return
+	}
+
+	// Try to get version to verify it's working
+	cmd := exec.Command("claude", "--version")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		result.AddError(
+			"Claude CLI",
+			fmt.Sprintf("Claude CLI is installed but not working properly: %v", err),
+			"Reinstall Claude CLI or check your installation",
+		)
+		return
+	}
+
+	// Success - log version info
+	version := strings.TrimSpace(string(output))
+	result.AddInfo(fmt.Sprintf("✓ Claude CLI: %s", version))
+
+	// Check if authenticated with a minimal test command
+	cmd = exec.Command("claude", "-p", "ping", "--tools", "\"\"")
+	output, err = cmd.CombinedOutput()
+	outputStr := string(output)
+
+	// Check for authentication errors
+	if err != nil || strings.Contains(outputStr, "authentication") || strings.Contains(outputStr, "Authentication required") {
+		result.AddError(
+			"Claude CLI",
+			"Claude CLI is not authenticated",
+			"Run 'claude setup-token' to authenticate with your API key",
+		)
+		return
+	}
+
+	result.AddInfo("✓ Claude CLI authentication verified")
+}
+
+// validateGit checks if Git is installed and accessible
+func validateGit(result *ValidationResult) {
+	// Check if git command exists
+	_, err := exec.LookPath("git")
+	if err != nil {
+		result.AddError(
+			"Git",
+			"Git is not installed or not in PATH",
+			"Install Git: https://git-scm.com/downloads",
+		)
+		return
+	}
+
+	// Try to get version
+	cmd := exec.Command("git", "--version")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		result.AddError(
+			"Git",
+			fmt.Sprintf("Git is installed but not working properly: %v", err),
+			"Reinstall Git or check your installation",
+		)
+		return
+	}
+
+	// Success - log version info
+	version := strings.TrimSpace(string(output))
+	result.AddInfo(fmt.Sprintf("✓ %s", version))
+}
+
+// validateProfiles checks profiles directory and default profile
+func validateProfiles(cfg *config.Config, result *ValidationResult, logger ports.Logger) {
+	// Check if profiles directory exists
+	if _, err := os.Stat(cfg.Profiles.Directory); os.IsNotExist(err) {
+		result.AddError(
+			"Profiles",
+			fmt.Sprintf("Profiles directory does not exist: %s", cfg.Profiles.Directory),
+			fmt.Sprintf("Create directory: mkdir -p %s", cfg.Profiles.Directory),
+		)
+		return
+	}
+
+	// Check if default profile exists
+	defaultProfilePath := filepath.Join(cfg.Profiles.Directory, cfg.Profiles.Default)
+	if _, err := os.Stat(defaultProfilePath); os.IsNotExist(err) {
+		result.AddError(
+			"Profiles",
+			fmt.Sprintf("Default profile directory does not exist: %s", defaultProfilePath),
+			fmt.Sprintf("Create default profile: mkdir -p %s && touch %s/prompt.md", defaultProfilePath, defaultProfilePath),
+		)
+		return
+	}
+
+	// Check if default profile has prompt.md
+	promptPath := filepath.Join(defaultProfilePath, "prompt.md")
+	if _, err := os.Stat(promptPath); os.IsNotExist(err) {
+		result.AddError(
+			"Profiles",
+			fmt.Sprintf("Default profile missing prompt.md: %s", promptPath),
+			fmt.Sprintf("Create prompt file: touch %s", promptPath),
+		)
+		return
+	}
+
+	// Check if prompt.md is not empty
+	fileInfo, err := os.Stat(promptPath)
+	if err != nil {
+		result.AddError(
+			"Profiles",
+			fmt.Sprintf("Cannot read default profile: %v", err),
+			"Check file permissions for profiles directory",
+		)
+		return
+	}
+
+	if fileInfo.Size() == 0 {
+		result.AddError(
+			"Profiles",
+			fmt.Sprintf("Default profile is empty: %s", promptPath),
+			"Add content to the profile file",
+		)
+		return
+	}
+
+	// Success
+	result.AddInfo(fmt.Sprintf("✓ Profiles: Found default profile at %s", defaultProfilePath))
+
+	// Check configured project profiles (non-fatal warnings)
+	validateProjectProfiles(cfg, logger)
+}
+
+// validateProjectProfiles checks if configured project profiles exist
+func validateProjectProfiles(cfg *config.Config, logger ports.Logger) {
+	for projectKey, projectProfile := range cfg.Profiles.Projects {
+		// Check project-level profile
+		if projectProfile.Profile != "" {
+			profilePath := filepath.Join(cfg.Profiles.Directory, projectProfile.Profile)
+			if _, err := os.Stat(profilePath); os.IsNotExist(err) {
+				logger.Warn(fmt.Sprintf("Profile for project %s not found: %s", projectKey, profilePath))
+			} else {
+				promptPath := filepath.Join(profilePath, "prompt.md")
+				if _, err := os.Stat(promptPath); os.IsNotExist(err) {
+					logger.Warn(fmt.Sprintf("Profile %s missing prompt.md", projectProfile.Profile))
+				}
+			}
+		}
+
+		// Check repository-level profiles
+		for repoName, profileName := range projectProfile.Repositories {
+			profilePath := filepath.Join(cfg.Profiles.Directory, profileName)
+			if _, err := os.Stat(profilePath); os.IsNotExist(err) {
+				logger.Warn(fmt.Sprintf("Profile for %s/%s not found: %s", projectKey, repoName, profilePath))
+			} else {
+				promptPath := filepath.Join(profilePath, "prompt.md")
+				if _, err := os.Stat(promptPath); os.IsNotExist(err) {
+					logger.Warn(fmt.Sprintf("Profile %s missing prompt.md", profileName))
+				}
+			}
+		}
+	}
+}
+
+// validateDirectories checks directory permissions for writing
+func validateDirectories(cfg *config.Config, result *ValidationResult) {
+	// Check git base directory - using hardcoded "./projects" for now
+	gitBaseDir := "./projects"
+	if err := ensureDirectoryWritable(gitBaseDir); err != nil {
+		result.AddError(
+			"Directories",
+			fmt.Sprintf("Cannot write to git directory: %s", gitBaseDir),
+			fmt.Sprintf("Check permissions: chmod 755 %s or create directory: mkdir -p %s", gitBaseDir, gitBaseDir),
+		)
+	} else {
+		result.AddInfo(fmt.Sprintf("✓ Git base directory: %s (writable)", gitBaseDir))
+	}
+
+	// Check logs directory (if file logging is enabled)
+	if cfg.Logging.EnableFile {
+		logsDir := "./logs"
+		if err := ensureDirectoryWritable(logsDir); err != nil {
+			result.AddError(
+				"Directories",
+				fmt.Sprintf("Cannot write to logs directory: %s", logsDir),
+				fmt.Sprintf("Create directory: mkdir -p %s && chmod 755 %s", logsDir, logsDir),
+			)
+		} else {
+			result.AddInfo(fmt.Sprintf("✓ Logs directory: %s (writable)", logsDir))
+		}
+	}
+}
+
+// ensureDirectoryWritable checks if directory is writable, creates if doesn't exist
+func ensureDirectoryWritable(dir string) error {
+	// Check if directory exists
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		// Try to create it
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory: %w", err)
+		}
+	}
+
+	// Check write permission by creating a temp file
+	testFile := filepath.Join(dir, ".write-test")
+	f, err := os.Create(testFile)
+	if err != nil {
+		return fmt.Errorf("directory is not writable: %w", err)
+	}
+	f.Close()
+	os.Remove(testFile)
+
+	return nil
+}

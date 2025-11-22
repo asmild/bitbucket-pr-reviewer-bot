@@ -2,6 +2,8 @@
 
 This guide walks you through deploying the PR Reviewer bot to production.
 
+> **Note:** This application uses a modern **Hexagonal Architecture** with clean separation of concerns, dependency injection, and production-grade resilience patterns including circuit breakers, retry logic, and comprehensive startup validation.
+
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
@@ -146,7 +148,7 @@ bitbucket:
   event_type: "comment_added"
   trigger_keyword: "/review"
 
-templates:
+profiles:
   directory: ./templates
   default: default
 
@@ -203,6 +205,36 @@ export BITBUCKET_USER="pr-review-bot"
 export BITBUCKET_TOKEN="your-app-password"
 export BITBUCKET_WEBHOOK_SECRET="your-webhook-secret"
 ```
+
+### 7. Verify Startup Dependencies
+
+The application performs comprehensive startup validation before running. You can test this:
+
+```bash
+./pr-reviewer
+```
+
+The application will check:
+- ✓ Configuration values (Bitbucket credentials, ports, timeouts)
+- ✓ Claude CLI installation and authentication
+- ✓ Git installation
+- ✓ Profiles directory and default profile existence
+- ✓ Directory write permissions (git base dir, logs)
+
+**Example successful output:**
+```
+✓ Claude CLI: claude-cli v1.2.3
+✓ Claude CLI authentication verified
+✓ git version 2.39.0
+✓ Profiles: Found default profile at ./templates/default
+✓ Git base directory: ./projects (writable)
+✓ Logs directory: ./logs (writable)
+All startup dependency checks passed
+
+Application started successfully - ready to process webhooks
+```
+
+**If validation fails**, the application will exit with clear error messages showing exactly what needs to be fixed.
 
 ## Deployment Options
 
@@ -369,7 +401,7 @@ data:
       user: pr-review-bot
       event_type: comment_added
       trigger_keyword: /review
-    templates:
+    profiles:
       directory: ./templates
       default: default
 ---

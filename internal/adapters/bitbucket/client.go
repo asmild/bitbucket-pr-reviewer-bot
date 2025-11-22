@@ -1,0 +1,407 @@
+package bitbucket
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/errors"
+	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/models"
+	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/ports"
+)
+
+// Client implements ports.VCSClient for Bitbucket Data Center
+type Client struct {
+	baseURL      string
+	username     string
+	token        string
+	httpClient   *http.Client
+	logger       ports.Logger
+	emojiTracker *emojiTracker
+}
+
+// Config holds Bitbucket client configuration
+type Config struct {
+	Username string
+	Token    string
+	Timeout  time.Duration
+}
+
+// NewClient creates a new Bitbucket client
+func NewClient(cfg Config, logger ports.Logger) *Client {
+	if cfg.Timeout == 0 {
+		cfg.Timeout = 30 * time.Second
+	}
+
+	return &Client{
+		baseURL:  "", // Will be set from webhook payload
+		username: cfg.Username,
+		token:    cfg.Token,
+		httpClient: &http.Client{
+			Timeout: cfg.Timeout,
+		},
+		logger: logger,
+		emojiTracker: &emojiTracker{
+			current: make(map[int]string),
+		},
+	}
+}
+
+// PostComment posts a comment on a pull request
+func (c *Client) PostComment(ctx context.Context, projectKey, repoSlug string, prID int, comment string) error {
+	url := fmt.Sprintf("%s/rest/api/1.0/projects/%s/repos/%s/pull-requests/%d/comments",
+		c.baseURL, projectKey, repoSlug, prID)
+
+	payload := map[string]interface{}{
+		"text": comment,
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return errors.Wrap(errors.ErrorCodeVCSAPIError,
+			"failed to marshal comment payload",
+			err,
+		)
+	}
+
+	c.logger.Debug("Posting comment to PR",
+		"project", projectKey,
+		"repo", repoSlug,
+		"pr_id", prID,
+	)
+
+	_, err = c.post(ctx, url, payloadBytes)
+	if err != nil {
+		return errors.Wrap(errors.ErrorCodeVCSAPIError,
+			"failed to post comment",
+			err,
+		).WithMetadata("project", projectKey).
+			WithMetadata("repo", repoSlug).
+			WithMetadata("pr_id", prID)
+	}
+
+	c.logger.Debug("Successfully posted comment to PR",
+		"project", projectKey,
+		"pr_id", prID,
+	)
+
+	return nil
+}
+
+// AddCommentReaction adds an emoji reaction to a comment
+func (c *Client) AddCommentReaction(ctx context.Context, projectKey, repoSlug string, prID, commentID int, emoji string) error {
+	// Get Bitbucket reaction name
+	reactionName := emojiToBitbucket(emoji)
+
+	c.logger.Debug("Adding reaction to comment",
+		"emoji", emoji,
+		"comment_id", commentID,
+	)
+
+	// Bitbucket Data Center comment-likes plugin API
+	url := fmt.Sprintf("%s/rest/comment-likes/latest/projects/%s/repos/%s/pull-requests/%d/comments/%d/reactions/%s",
+		c.baseURL, projectKey, repoSlug, prID, commentID, reactionName)
+
+	_, err := c.put(ctx, url, nil)
+	if err != nil {
+		return errors.Wrap(errors.ErrorCodeVCSAPIError,
+			"failed to add reaction",
+			err,
+		).WithMetadata("emoji", emoji).
+			WithMetadata("comment_id", commentID)
+	}
+
+	// Track the emoji
+	c.emojiTracker.set(commentID, emoji)
+
+	c.logger.Debug("Successfully added reaction",
+		"emoji", emoji,
+		"comment_id", commentID,
+	)
+
+	return nil
+}
+
+// RemoveCommentReaction removes an emoji reaction from a comment
+func (c *Client) RemoveCommentReaction(ctx context.Context, projectKey, repoSlug string, prID, commentID int, emoji string) error {
+	// Get Bitbucket reaction name
+	reactionName := emojiToBitbucket(emoji)
+
+	c.logger.Debug("Removing reaction from comment",
+		"emoji", emoji,
+		"comment_id", commentID,
+	)
+
+	// Bitbucket Data Center comment-likes plugin API
+	url := fmt.Sprintf("%s/rest/comment-likes/latest/projects/%s/repos/%s/pull-requests/%d/comments/%d/reactions/%s",
+		c.baseURL, projectKey, repoSlug, prID, commentID, reactionName)
+
+	err := c.delete(ctx, url)
+	// 404 is acceptable for deletes (reaction already removed or never added)
+	if err != nil && !strings.Contains(err.Error(), "404") {
+		return errors.Wrap(errors.ErrorCodeVCSAPIError,
+			"failed to remove reaction",
+			err,
+		).WithMetadata("emoji", emoji).
+			WithMetadata("comment_id", commentID)
+	}
+
+	// Clear from tracker
+	c.emojiTracker.remove(commentID)
+
+	if err != nil {
+		c.logger.Debug("Reaction not found (already removed or never added)",
+			"emoji", emoji,
+			"comment_id", commentID,
+		)
+	} else {
+		c.logger.Debug("Successfully removed reaction",
+			"emoji", emoji,
+			"comment_id", commentID,
+		)
+	}
+
+	return nil
+}
+
+// GetPullRequest retrieves pull request information
+func (c *Client) GetPullRequest(ctx context.Context, projectKey, repoSlug string, prID int) (*models.PullRequest, error) {
+	url := fmt.Sprintf("%s/rest/api/1.0/projects/%s/repos/%s/pull-requests/%d",
+		c.baseURL, projectKey, repoSlug, prID)
+
+	data, err := c.get(ctx, url)
+	if err != nil {
+		return nil, errors.Wrap(errors.ErrorCodeVCSAPIError,
+			"failed to get pull request",
+			err,
+		).WithMetadata("project", projectKey).
+			WithMetadata("repo", repoSlug).
+			WithMetadata("pr_id", prID)
+	}
+
+	// Parse the response
+	var response struct {
+		ID          int    `json:"id"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Author      struct {
+			User struct {
+				Name string `json:"name"`
+			} `json:"user"`
+		} `json:"author"`
+		FromRef struct {
+			DisplayID string `json:"displayId"`
+		} `json:"fromRef"`
+		ToRef struct {
+			DisplayID string `json:"displayId"`
+		} `json:"toRef"`
+		Links struct {
+			Self []struct {
+				Href string `json:"href"`
+			} `json:"self"`
+		} `json:"links"`
+	}
+
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, errors.Wrap(errors.ErrorCodeVCSInvalidPayload,
+			"failed to parse pull request response",
+			err,
+		)
+	}
+
+	// Construct clone URL from base URL
+	cloneURL := fmt.Sprintf("%s/scm/%s/%s.git", c.baseURL, projectKey, repoSlug)
+
+	// Get PR URL
+	prURL := c.baseURL + "/projects/" + projectKey + "/repos/" + repoSlug + "/pull-requests/" + fmt.Sprint(prID)
+	if len(response.Links.Self) > 0 {
+		prURL = response.Links.Self[0].Href
+	}
+
+	return models.NewPullRequest(
+		response.ID,
+		projectKey,
+		repoSlug,
+		response.Title,
+		response.Description,
+		response.Author.User.Name,
+		response.FromRef.DisplayID,
+		response.ToRef.DisplayID,
+		cloneURL,
+		prURL,
+	)
+}
+
+// ValidateWebhookSignature validates the webhook signature
+func (c *Client) ValidateWebhookSignature(payload []byte, signature, secret string) bool {
+	// Implementation for Bitbucket webhook signature validation
+	// For now, we'll implement a basic HMAC validation
+	// Note: Bitbucket Data Center uses X-Hub-Signature header with HMAC-SHA256
+	return validateHMACSignature(payload, signature, secret)
+}
+
+// SetBaseURL sets the base URL for the VCS API
+func (c *Client) SetBaseURL(baseURL string) {
+	c.baseURL = baseURL
+}
+
+// HTTP request helpers
+
+func (c *Client) doRequest(ctx context.Context, method, url string, body []byte) (*http.Response, error) {
+	var bodyReader io.Reader
+	if body != nil {
+		bodyReader = bytes.NewBuffer(body)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	if err != nil {
+		return nil, errors.Wrap(errors.ErrorCodeNetworkFailure,
+			"failed to create request",
+			err,
+		)
+	}
+
+	// Set authentication
+	req.SetBasicAuth(c.username, c.token)
+
+	// Set standard headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	// Execute request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(errors.ErrorCodeNetworkFailure,
+			"failed to send request",
+			err,
+		)
+	}
+
+	return resp, nil
+}
+
+func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
+	resp, err := c.doRequest(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return c.handleResponse(resp)
+}
+
+func (c *Client) post(ctx context.Context, url string, body []byte) ([]byte, error) {
+	resp, err := c.doRequest(ctx, "POST", url, body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return c.handleResponse(resp)
+}
+
+func (c *Client) put(ctx context.Context, url string, body []byte) ([]byte, error) {
+	resp, err := c.doRequest(ctx, "PUT", url, body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return c.handleResponse(resp)
+}
+
+func (c *Client) delete(ctx context.Context, url string) error {
+	resp, err := c.doRequest(ctx, "DELETE", url, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// For DELETE, we don't care about response body
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
+func (c *Client) handleResponse(resp *http.Response) ([]byte, error) {
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.Wrap(errors.ErrorCodeNetworkFailure,
+			"failed to read response body",
+			err,
+		)
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, errors.New(errors.ErrorCodeVCSUnauthorized, "unauthorized access to Bitbucket API")
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errors.New(errors.ErrorCodeVCSNotFound, "resource not found")
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, errors.New(errors.ErrorCodeRateLimitExceeded, "rate limit exceeded")
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, errors.New(errors.ErrorCodeVCSAPIError,
+			fmt.Sprintf("API request failed with status %d: %s", resp.StatusCode, string(bodyBytes)),
+		)
+	}
+
+	return bodyBytes, nil
+}
+
+// emojiTracker manages emoji reactions per comment
+type emojiTracker struct {
+	current map[int]string
+	mu      sync.Mutex
+}
+
+func (et *emojiTracker) set(commentID int, emoji string) {
+	et.mu.Lock()
+	defer et.mu.Unlock()
+	et.current[commentID] = emoji
+}
+
+func (et *emojiTracker) get(commentID int) (string, bool) {
+	et.mu.Lock()
+	defer et.mu.Unlock()
+	emoji, ok := et.current[commentID]
+	return emoji, ok
+}
+
+func (et *emojiTracker) remove(commentID int) {
+	et.mu.Lock()
+	defer et.mu.Unlock()
+	delete(et.current, commentID)
+}
+
+// emojiToBitbucket converts common emoji names to Bitbucket reaction names
+func emojiToBitbucket(emoji string) string {
+	emojiMap := map[string]string{
+		"EYES":       "eyes",
+		"THINKING":   "thinking_face",
+		"PROCESSING": "eyes",
+		"THUMBSUP":   "thumbsup",
+		"THUMBSDOWN": "thumbsdown",
+		"CONFUSED":   "confused",
+		"TADA":       "tada",
+		"X":          "x",
+	}
+
+	if mapped, ok := emojiMap[emoji]; ok {
+		return mapped
+	}
+	return strings.ToLower(emoji)
+}
