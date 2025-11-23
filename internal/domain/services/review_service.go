@@ -109,7 +109,7 @@ func (s *ReviewService) performReview(ctx context.Context, pr *models.PullReques
 	// Step 2: Get the appropriate profile (template content)
 	profile, err := s.profileProvider.GetProfile(ctx, pr)
 	if err != nil {
-		return nil, errors.Wrap(errors.ErrorCodeTemplateNotFound,
+		return nil, errors.Wrap(errors.ErrorCodeProfileNotFound,
 			"failed to get review profile",
 			err,
 		)

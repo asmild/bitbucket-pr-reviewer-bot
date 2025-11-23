@@ -342,11 +342,11 @@ func (c *Client) handleResponse(resp *http.Response) ([]byte, error) {
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, errors.New(errors.ErrorCodeVCSUnauthorized, "unauthorized access to Bitbucket API")
+		return nil, errors.ErrUnauthorized
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, errors.New(errors.ErrorCodeVCSNotFound, "resource not found")
+		return nil, errors.ErrNotFound
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests {

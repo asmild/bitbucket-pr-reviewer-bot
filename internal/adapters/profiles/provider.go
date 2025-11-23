@@ -66,7 +66,7 @@ func (p *Provider) GetProfile(ctx context.Context, pr *models.PullRequest) (stri
 
 	content, err := os.ReadFile(profilePath)
 	if err != nil {
-		return "", errors.Wrap(errors.ErrorCodeTemplateNotFound,
+		return "", errors.Wrap(errors.ErrorCodeProfileNotFound,
 			fmt.Sprintf("failed to load profile '%s'", profileName),
 			err,
 		).WithMetadata("profile", profileName).
@@ -104,14 +104,14 @@ func (p *Provider) ValidateProfile(profile string) error {
 	}
 
 	if len(missing) > 0 {
-		return errors.New(errors.ErrorCodeTemplateInvalid,
+		return errors.New(errors.ErrorCodeProfileInvalid,
 			fmt.Sprintf("profile missing required sections: %v", missing),
 		)
 	}
 
 	// Check minimum length
 	if len(profile) < 100 {
-		return errors.New(errors.ErrorCodeTemplateInvalid,
+		return errors.New(errors.ErrorCodeProfileInvalid,
 			"profile is too short (minimum 100 characters)",
 		)
 	}
@@ -123,7 +123,7 @@ func (p *Provider) ValidateProfile(profile string) error {
 func (p *Provider) ReloadProfiles() error {
 	// Validate that profile directory exists
 	if _, err := os.Stat(p.directory); os.IsNotExist(err) {
-		return errors.Wrap(errors.ErrorCodeTemplateNotFound,
+		return errors.Wrap(errors.ErrorCodeProfileNotFound,
 			"profile directory does not exist",
 			err,
 		).WithMetadata("directory", p.directory)
@@ -132,7 +132,7 @@ func (p *Provider) ReloadProfiles() error {
 	// List and validate all profiles
 	profiles, err := p.listProfiles()
 	if err != nil {
-		return errors.Wrap(errors.ErrorCodeTemplateNotFound,
+		return errors.Wrap(errors.ErrorCodeProfileNotFound,
 			"failed to list profiles",
 			err,
 		)

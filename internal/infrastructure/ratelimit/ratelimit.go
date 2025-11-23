@@ -10,12 +10,12 @@ import (
 
 // RateLimiter implements a token bucket rate limiter
 type RateLimiter struct {
-	rate       int           // tokens per interval
-	interval   time.Duration // interval duration
-	tokens     int           // current tokens
-	maxTokens  int           // maximum tokens
-	lastRefill time.Time     // last refill time
-	mu         sync.Mutex
+	rate        int           // requests allowed per interval
+	interval    time.Duration // interval duration
+	capacity    int           // current available requests
+	maxCapacity int           // maximum capacity
+	lastRefill  time.Time     // last refill time
+	mu          sync.Mutex
 }
 
 // New creates a new RateLimiter
@@ -23,11 +23,11 @@ type RateLimiter struct {
 // interval: time period for the rate (e.g., 1 second, 1 minute)
 func New(rate int, interval time.Duration) *RateLimiter {
 	return &RateLimiter{
-		rate:       rate,
-		interval:   interval,
-		tokens:     rate,
-		maxTokens:  rate,
-		lastRefill: time.Now(),
+		rate:        rate,
+		interval:    interval,
+		capacity:    rate,
+		maxCapacity: rate,
+		lastRefill:  time.Now(),
 	}
 }
 
@@ -38,8 +38,8 @@ func (rl *RateLimiter) Allow() bool {
 
 	rl.refill()
 
-	if rl.tokens > 0 {
-		rl.tokens--
+	if rl.capacity > 0 {
+		rl.capacity--
 		return true
 	}
 
@@ -83,45 +83,46 @@ func (rl *RateLimiter) TryExecute(fn func() error) error {
 	return fn()
 }
 
-// refill adds tokens based on time elapsed (must be called with lock held)
+// refill adds capacity based on time elapsed (must be called with lock held)
 func (rl *RateLimiter) refill() {
 	now := time.Now()
 	elapsed := now.Sub(rl.lastRefill)
 
-	// Calculate how many tokens to add based on elapsed time
-	tokensToAdd := int(elapsed.Nanoseconds() / rl.interval.Nanoseconds() * int64(rl.rate))
+	// Calculate how much capacity to add based on elapsed time
+	// Use float64 for accurate calculation, then convert to int
+	elapsedFraction := float64(elapsed) / float64(rl.interval)
+	capacityToAdd := int(elapsedFraction * float64(rl.rate))
 
-	if tokensToAdd > 0 {
-		rl.tokens += tokensToAdd
-		if rl.tokens > rl.maxTokens {
-			rl.tokens = rl.maxTokens
+	if capacityToAdd > 0 {
+		rl.capacity += capacityToAdd
+		if rl.capacity > rl.maxCapacity {
+			rl.capacity = rl.maxCapacity
 		}
 		rl.lastRefill = now
 	}
 }
 
-// getWaitTime calculates how long to wait until next token is available
+// getWaitTime calculates how long to wait until next request can be processed
 func (rl *RateLimiter) getWaitTime() time.Duration {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	if rl.tokens > 0 {
+	if rl.capacity > 0 {
 		return 0
 	}
 
-	// Calculate time until next token
-	tokensNeeded := 1
-	timePerToken := rl.interval / time.Duration(rl.rate)
-	return time.Duration(tokensNeeded) * timePerToken
+	// Calculate time until capacity is available for one more request
+	timePerRequest := rl.interval / time.Duration(rl.rate)
+	return timePerRequest
 }
 
-// GetAvailableTokens returns the current number of available tokens
-func (rl *RateLimiter) GetAvailableTokens() int {
+// GetAvailableCapacity returns the current number of available request slots
+func (rl *RateLimiter) GetAvailableCapacity() int {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	rl.refill()
-	return rl.tokens
+	return rl.capacity
 }
 
 // Reset resets the rate limiter to full capacity
@@ -129,7 +130,7 @@ func (rl *RateLimiter) Reset() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	rl.tokens = rl.maxTokens
+	rl.capacity = rl.maxCapacity
 	rl.lastRefill = time.Now()
 }
 

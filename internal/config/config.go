@@ -58,6 +58,9 @@ type Config struct {
 	// Metrics persistence configuration
 	Metrics MetricsConfig `yaml:"metrics"`
 
+	// Rate limiter configuration
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
+
 	// Logging configuration
 	Logging LoggingConfig `yaml:"logging"`
 }
@@ -111,6 +114,11 @@ type MetricsPersistenceConfig struct {
 	Path           string        `yaml:"path"`
 	SaveIntervalMS int           `yaml:"save_interval_ms"`
 	SaveInterval   time.Duration `yaml:"-"`
+}
+
+type RateLimitConfig struct {
+	Enabled            bool `yaml:"enabled"`
+	RequestsPerMinute int  `yaml:"requests_per_minute"`
 }
 
 type LoggingConfig struct {
@@ -203,6 +211,10 @@ func getDefaultConfig() *Config {
 				Path:           "./metrics-storage",
 				SaveIntervalMS: 30000,
 			},
+		},
+		RateLimit: RateLimitConfig{
+			Enabled:            false,
+			RequestsPerMinute: 60,
 		},
 		Logging: LoggingConfig{
 			Level:             "info",
@@ -306,6 +318,14 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if defaultProfile := os.Getenv("PROFILES_DEFAULT"); defaultProfile != "" {
 		cfg.Profiles.Default = defaultProfile
+	}
+
+	// Rate limiter overrides
+	if enabled := os.Getenv("RATE_LIMIT_ENABLED"); enabled != "" {
+		cfg.RateLimit.Enabled = getEnvAsBool("RATE_LIMIT_ENABLED", cfg.RateLimit.Enabled)
+	}
+	if rpm := getEnvAsInt("RATE_LIMIT_REQUESTS_PER_MINUTE", 0); rpm != 0 {
+		cfg.RateLimit.RequestsPerMinute = rpm
 	}
 
 	// Logging overrides

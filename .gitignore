@@ -7,6 +7,7 @@
 build
 bin
 bb-pr-reviewer
+pr-reviewer
 .claude
 
 # Test binary, built with `go test -c`
@@ -46,6 +47,9 @@ logs/
 
 # Metrics storage
 metrics-storage/
+
+# Projects
+projects
 
 # Claude configuration
 claude-config/

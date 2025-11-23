@@ -18,6 +18,7 @@ type WebhookHandler struct {
 	vcsClient     ports.VCSClient
 	webhookParser ports.VCSWebhookParser
 	queue         ports.ReviewQueue
+	rateLimiter   ports.RateLimiter
 	metrics       ports.MetricsCollector
 	logger        ports.Logger
 	config        WebhookConfig
@@ -43,6 +44,7 @@ func NewWebhookHandler(
 	vcsClient ports.VCSClient,
 	webhookParser ports.VCSWebhookParser,
 	queue ports.ReviewQueue,
+	rateLimiter ports.RateLimiter,
 	metrics ports.MetricsCollector,
 	logger ports.Logger,
 	config WebhookConfig,
@@ -51,6 +53,7 @@ func NewWebhookHandler(
 		vcsClient:     vcsClient,
 		webhookParser: webhookParser,
 		queue:         queue,
+		rateLimiter:   rateLimiter,
 		metrics:       metrics,
 		logger:        logger,
 		config:        config,
@@ -65,6 +68,14 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 			"method", r.Method,
 		)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Apply rate limiting if configured
+	if h.rateLimiter != nil && !h.rateLimiter.Allow() {
+		h.logger.Warn("Rate limit exceeded for webhook")
+		h.metrics.IncrementWebhookReceived("rate_limited")
+		http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 		return
 	}
 

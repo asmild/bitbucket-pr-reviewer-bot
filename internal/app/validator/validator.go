@@ -1,11 +1,14 @@
 package validator
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/config"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/ports"
@@ -162,22 +165,11 @@ func validateClaudeCLI(result *ValidationResult) {
 	version := strings.TrimSpace(string(output))
 	result.AddInfo(fmt.Sprintf("✓ Claude CLI: %s", version))
 
-	// Check if authenticated with a minimal test command
-	cmd = exec.Command("claude", "-p", "ping", "--tools", "\"\"")
-	output, err = cmd.CombinedOutput()
-	outputStr := string(output)
+	// Check Claude authentication
+	validateClaudeAuth(result)
 
-	// Check for authentication errors
-	if err != nil || strings.Contains(outputStr, "authentication") || strings.Contains(outputStr, "Authentication required") {
-		result.AddError(
-			"Claude CLI",
-			"Claude CLI is not authenticated",
-			"Run 'claude setup-token' to authenticate with your API key",
-		)
-		return
-	}
-
-	result.AddInfo("✓ Claude CLI authentication verified")
+	// Check if Bitbucket MCP is configured
+	validateBitbucketMCP(result)
 }
 
 // validateGit checks if Git is installed and accessible
@@ -222,30 +214,19 @@ func validateProfiles(cfg *config.Config, result *ValidationResult, logger ports
 		return
 	}
 
-	// Check if default profile exists
-	defaultProfilePath := filepath.Join(cfg.Profiles.Directory, cfg.Profiles.Default)
+	// Check if default profile .md file exists
+	defaultProfilePath := filepath.Join(cfg.Profiles.Directory, cfg.Profiles.Default+".md")
 	if _, err := os.Stat(defaultProfilePath); os.IsNotExist(err) {
 		result.AddError(
 			"Profiles",
-			fmt.Sprintf("Default profile directory does not exist: %s", defaultProfilePath),
-			fmt.Sprintf("Create default profile: mkdir -p %s && touch %s/prompt.md", defaultProfilePath, defaultProfilePath),
+			fmt.Sprintf("Default profile file does not exist: %s", defaultProfilePath),
+			fmt.Sprintf("Create default profile: touch %s", defaultProfilePath),
 		)
 		return
 	}
 
-	// Check if default profile has prompt.md
-	promptPath := filepath.Join(defaultProfilePath, "prompt.md")
-	if _, err := os.Stat(promptPath); os.IsNotExist(err) {
-		result.AddError(
-			"Profiles",
-			fmt.Sprintf("Default profile missing prompt.md: %s", promptPath),
-			fmt.Sprintf("Create prompt file: touch %s", promptPath),
-		)
-		return
-	}
-
-	// Check if prompt.md is not empty
-	fileInfo, err := os.Stat(promptPath)
+	// Check if default profile is not empty
+	fileInfo, err := os.Stat(defaultProfilePath)
 	if err != nil {
 		result.AddError(
 			"Profiles",
@@ -258,7 +239,7 @@ func validateProfiles(cfg *config.Config, result *ValidationResult, logger ports
 	if fileInfo.Size() == 0 {
 		result.AddError(
 			"Profiles",
-			fmt.Sprintf("Default profile is empty: %s", promptPath),
+			fmt.Sprintf("Default profile is empty: %s", defaultProfilePath),
 			"Add content to the profile file",
 		)
 		return
@@ -276,27 +257,17 @@ func validateProjectProfiles(cfg *config.Config, logger ports.Logger) {
 	for projectKey, projectProfile := range cfg.Profiles.Projects {
 		// Check project-level profile
 		if projectProfile.Profile != "" {
-			profilePath := filepath.Join(cfg.Profiles.Directory, projectProfile.Profile)
+			profilePath := filepath.Join(cfg.Profiles.Directory, projectProfile.Profile+".md")
 			if _, err := os.Stat(profilePath); os.IsNotExist(err) {
 				logger.Warn(fmt.Sprintf("Profile for project %s not found: %s", projectKey, profilePath))
-			} else {
-				promptPath := filepath.Join(profilePath, "prompt.md")
-				if _, err := os.Stat(promptPath); os.IsNotExist(err) {
-					logger.Warn(fmt.Sprintf("Profile %s missing prompt.md", projectProfile.Profile))
-				}
 			}
 		}
 
 		// Check repository-level profiles
 		for repoName, profileName := range projectProfile.Repositories {
-			profilePath := filepath.Join(cfg.Profiles.Directory, profileName)
+			profilePath := filepath.Join(cfg.Profiles.Directory, profileName+".md")
 			if _, err := os.Stat(profilePath); os.IsNotExist(err) {
 				logger.Warn(fmt.Sprintf("Profile for %s/%s not found: %s", projectKey, repoName, profilePath))
-			} else {
-				promptPath := filepath.Join(profilePath, "prompt.md")
-				if _, err := os.Stat(promptPath); os.IsNotExist(err) {
-					logger.Warn(fmt.Sprintf("Profile %s missing prompt.md", profileName))
-				}
 			}
 		}
 	}
@@ -351,4 +322,109 @@ func ensureDirectoryWritable(dir string) error {
 	os.Remove(testFile)
 
 	return nil
+}
+
+// validateClaudeAuth checks if Claude CLI is authenticated
+func validateClaudeAuth(result *ValidationResult) {
+	// Try a minimal prompt that requires authentication
+	// Using a simple prompt with -p flag and --model haiku for speed
+	// With a timeout to detect invalid credentials (they cause hangs)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "claude", "-p", "hello", "--model", "haiku")
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	output := stdout.String() + stderr.String()
+
+	// Check for timeout (invalid credentials cause command to hang)
+	if ctx.Err() == context.DeadlineExceeded {
+		result.AddError(
+			"Claude Authentication",
+			"Claude CLI authentication check timed out - likely invalid credentials",
+			"Authenticate Claude CLI:\n"+
+				"  Run: claude setup-token\n"+
+				"  Or set ANTHROPIC_API_KEY environment variable\n"+
+				"  Make sure your API key is valid (not expired or invalid)",
+		)
+		return
+	}
+
+	// Check for authentication errors
+	// Claude shows "Invalid API key · Please run /login" for invalid/missing credentials
+	outputLower := strings.ToLower(output)
+	if err != nil ||
+		strings.Contains(outputLower, "invalid api key") ||
+		strings.Contains(outputLower, "please run /login") {
+		result.AddError(
+			"Claude Authentication",
+			"Claude CLI is not authenticated or credentials are invalid",
+			"Authenticate Claude CLI:\n"+
+				"  Run: claude setup-token\n"+
+				"  Or set ANTHROPIC_API_KEY environment variable\n"+
+				"  Make sure your API key is valid",
+		)
+		return
+	}
+
+	result.AddInfo("✓ Claude CLI is authenticated")
+}
+
+// validateBitbucketMCP checks if Bitbucket MCP is configured in Claude Code
+func validateBitbucketMCP(result *ValidationResult) {
+	// Use claude mcp list to check configured MCP servers
+	cmd := exec.Command("claude", "mcp", "list")
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	output := stdout.String() + stderr.String()
+
+	// Check if command succeeded
+	if err != nil {
+		result.AddError(
+			"Bitbucket MCP",
+			"Failed to check MCP servers configuration",
+			"Ensure Claude CLI is properly installed and try: claude mcp list",
+		)
+		return
+	}
+
+	// Check if no MCP servers configured
+	if strings.Contains(output, "No MCP servers configured") {
+		result.AddError(
+			"Bitbucket MCP",
+			"No MCP servers configured in Claude Code",
+			"Install and configure Bitbucket MCP:\n"+
+				"  1. Run: claude mcp add\n"+
+				"  2. Choose '@atlassian-dc-mcp/bitbucket'\n"+
+				"  3. Configure your Bitbucket Data Center URL and credentials\n"+
+				"  Or install manually: npx -y @atlassian-dc-mcp/bitbucket install",
+		)
+		return
+	}
+
+	// Check if output contains Bitbucket MCP indicators
+	hasBitbucketMCP := strings.Contains(strings.ToLower(output), "bitbucket") ||
+		strings.Contains(output, "@atlassian-dc-mcp/bitbucket")
+
+	if !hasBitbucketMCP {
+		result.AddError(
+			"Bitbucket MCP",
+			"Bitbucket MCP server is not configured (found other MCP servers but not Bitbucket)",
+			"Add Bitbucket MCP server:\n"+
+				"  1. Run: claude mcp add\n"+
+				"  2. Choose '@atlassian-dc-mcp/bitbucket'\n"+
+				"  3. Configure your Bitbucket Data Center URL and credentials",
+		)
+		return
+	}
+
+	result.AddInfo("✓ Bitbucket MCP server is configured")
 }

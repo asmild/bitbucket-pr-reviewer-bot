@@ -1,0 +1,193 @@
+{
+  "eventKey": "pr:comment:added",
+  "date": "2025-11-23T15:00:00+0000",
+  "actor": {
+    "name": "test-user",
+    "active": true,
+    "displayName": "Test User",
+    "emailAddress": "test@example.com",
+    "id": 12345,
+    "slug": "test-user",
+    "type": "NORMAL",
+    "links": {
+      "self": [
+        {
+          "href": "https://git.ib-ci.com/users/test-user"
+        }
+      ]
+    }
+  },
+  "pullRequest": {
+    "id": 41,
+    "version": 0,
+    "title": "Test PR for End-to-End Testing",
+    "description": "This is a test PR to verify the bot works end-to-end",
+    "state": "OPEN",
+    "open": true,
+    "closed": false,
+    "draft": false,
+    "createdDate": 1732370400000,
+    "updatedDate": 1732370400000,
+    "fromRef": {
+      "id": "refs/heads/feature/test-branch",
+      "displayId": "feature/test-branch",
+      "latestCommit": "abc123def456",
+      "type": "BRANCH",
+      "repository": {
+        "slug": "infobip-iasm-ib-arm-amd-test",
+        "id": 1001,
+        "name": "infobip-iasm-ib-arm-amd-test",
+        "description": "Test repository",
+        "hierarchyId": "test123",
+        "scmId": "git",
+        "state": "AVAILABLE",
+        "statusMessage": "Available",
+        "forkable": true,
+        "project": {
+          "key": "CI",
+          "id": 100,
+          "name": "CI",
+          "public": false,
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://git.ib-ci.com/projects/CI"
+              }
+            ]
+          }
+        },
+        "public": false,
+        "archived": false,
+        "links": {
+          "clone": [
+            {
+              "href": "https://git.ib-ci.com/scm/ci/infobip-iasm-ib-arm-amd-test.git",
+              "name": "http"
+            },
+            {
+              "href": "ssh://git@git.ib-ci.com:7999/ci/infobip-iasm-ib-arm-amd-test.git",
+              "name": "ssh"
+            }
+          ],
+          "self": [
+            {
+              "href": "https://git.ib-ci.com/projects/CI/repos/infobip-iasm-ib-arm-amd-test/browse"
+            }
+          ]
+        }
+      }
+    },
+    "toRef": {
+      "id": "refs/heads/main",
+      "displayId": "main",
+      "latestCommit": "def456abc123",
+      "type": "BRANCH",
+      "repository": {
+        "slug": "infobip-iasm-ib-arm-amd-test",
+        "id": 1001,
+        "name": "infobip-iasm-ib-arm-amd-test",
+        "description": "Test repository",
+        "hierarchyId": "test123",
+        "scmId": "git",
+        "state": "AVAILABLE",
+        "statusMessage": "Available",
+        "forkable": true,
+        "project": {
+          "key": "CI",
+          "id": 100,
+          "name": "CI",
+          "public": false,
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://git.ib-ci.com/projects/CI"
+              }
+            ]
+          }
+        },
+        "public": false,
+        "archived": false,
+        "links": {
+          "clone": [
+            {
+              "href": "https://git.ib-ci.com/scm/ci/infobip-iasm-ib-arm-amd-test.git",
+              "name": "http"
+            },
+            {
+              "href": "ssh://git@git.ib-ci.com:7999/ci/infobip-iasm-ib-arm-amd-test.git",
+              "name": "ssh"
+            }
+          ],
+          "self": [
+            {
+              "href": "https://git.ib-ci.com/projects/CI/repos/infobip-iasm-ib-arm-amd-test/browse"
+            }
+          ]
+        }
+      }
+    },
+    "locked": false,
+    "author": {
+      "user": {
+        "name": "iasmandiyarov",
+        "emailAddress": "iasmandiyarov@infobip.com",
+        "active": true,
+        "displayName": "Ilyas Asmandiyarov",
+        "id": 6706,
+        "slug": "iasmandiyarov",
+        "type": "NORMAL",
+        "links": {
+          "self": [
+            {
+              "href": "https://git.ib-ci.com/users/iasmandiyarov"
+            }
+          ]
+        }
+      },
+      "role": "AUTHOR",
+      "approved": false,
+      "status": "UNAPPROVED"
+    },
+    "reviewers": [],
+    "participants": [],
+    "links": {
+      "self": [
+        {
+          "href": "https://git.ib-ci.com/projects/CI/repos/infobip-iasm-ib-arm-amd-test/pull-requests/41"
+        }
+      ]
+    }
+  },
+  "comment": {
+    "properties": {
+      "repositoryId": 1001
+    },
+    "id": 999001,
+    "version": 0,
+    "text": "@pr-reviewer-bot /review",
+    "author": {
+      "name": "iasmandiyarov",
+      "active": true,
+      "displayName": "Ilyas Asmandiyarov",
+      "emailAddress": "iasmandiyarov@infobip.com",
+      "id": 6706,
+      "slug": "iasmandiyarov",
+      "type": "NORMAL",
+      "links": {
+        "self": [
+          {
+            "href": "https://git.ib-ci.com/users/iasmandiyarov"
+          }
+        ]
+      }
+    },
+    "createdDate": 1732370400000,
+    "updatedDate": 1732370400000,
+    "comments": [],
+    "threadResolved": false,
+    "severity": "NORMAL",
+    "state": "OPEN"
+  }
+}

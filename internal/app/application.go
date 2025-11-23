@@ -18,6 +18,7 @@ import (
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/config"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/ports"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/services"
+	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/infrastructure/ratelimit"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -38,6 +39,7 @@ type Application struct {
 	profileProvider  ports.ProfileProvider
 	metricsCollector ports.MetricsCollector
 	circuitBreaker   ports.CircuitBreaker
+	rateLimiter      ports.RateLimiter
 	queue            ports.ReviewQueue
 
 	// HTTP server
@@ -116,6 +118,12 @@ func New(cfg *config.Config) (*Application, error) {
 		cfg.Claude.TimeoutMinutes*60, // convert to seconds
 	)
 
+	// Initialize rate limiter if enabled
+	var rateLimiter ports.RateLimiter
+	if cfg.RateLimit.Enabled {
+		rateLimiter = initializeRateLimiter(cfg, log)
+	}
+
 	// Initialize queue
 	reviewQueue := queue.NewQueue(
 		queue.Config{
@@ -140,6 +148,7 @@ func New(cfg *config.Config) (*Application, error) {
 		profileProvider:  profileProvider,
 		metricsCollector: metricsCollector,
 		circuitBreaker:   circuitBreaker,
+		rateLimiter:      rateLimiter,
 		queue:            reviewQueue,
 	}
 
@@ -162,6 +171,7 @@ func (a *Application) initHTTPServer() error {
 		a.vcsClient,
 		a.webhookParser,
 		a.queue,
+		a.rateLimiter,
 		a.metricsCollector,
 		a.logger,
 		handlers.WebhookConfig{
@@ -209,8 +219,6 @@ func (a *Application) Start(ctx context.Context) error {
 		}
 	}()
 
-	a.logger.Info("Application started successfully")
-
 	return nil
 }
 
@@ -229,8 +237,6 @@ func (a *Application) Stop(ctx context.Context) error {
 		return err
 	}
 
-	a.logger.Info("Application stopped successfully")
-
 	return nil
 }
 
@@ -247,4 +253,18 @@ func (a *Application) GetQueue() ports.ReviewQueue {
 // GetCircuitBreaker returns the circuit breaker instance
 func (a *Application) GetCircuitBreaker() ports.CircuitBreaker {
 	return a.circuitBreaker
+}
+
+// initializeRateLimiter creates a rate limiter based on configuration
+func initializeRateLimiter(cfg *config.Config, log ports.Logger) ports.RateLimiter {
+	requestsPerMinute := cfg.RateLimit.RequestsPerMinute
+	if requestsPerMinute <= 0 {
+		requestsPerMinute = 60 // default
+	}
+
+	log.Info("Rate limiter initialized",
+		"requests_per_minute", requestsPerMinute,
+	)
+
+	return ratelimit.PerMinute(requestsPerMinute)
 }

@@ -67,6 +67,13 @@ func ProfilesSearchPaths() []string {
 // FindConfigFile searches for config file in predefined locations
 // Returns the first existing config file path or empty string if not found
 func FindConfigFile() string {
+	// Check if CONFIG_PATH environment variable is set
+	if configPath := os.Getenv("CONFIG_PATH"); configPath != "" {
+		if _, err := os.Stat(configPath); err == nil {
+			return configPath
+		}
+	}
+
 	// Search in predefined locations
 	for _, path := range ConfigSearchPaths() {
 		if _, err := os.Stat(path); err == nil {

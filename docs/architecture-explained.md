@@ -316,6 +316,159 @@ profiles/
 4. **Validated** - Ensures prompts have required structure
 5. **Simple** - Just markdown files, no complex templating engine
 
+## Rate Limiting System
+
+**Location:** `internal/infrastructure/ratelimit/ratelimit.go`
+
+The Rate Limiter protects the webhook endpoint from being overwhelmed by too many requests. It implements the **token bucket algorithm** to control the rate of incoming webhooks.
+
+### How Rate Limiting Works
+
+**Algorithm:** Token Bucket (also called Leaky Bucket)
+
+The rate limiter maintains a "bucket" with a certain **capacity** of available request slots:
+- Each incoming webhook request consumes 1 capacity slot
+- Capacity refills automatically over time at a configured rate
+- If capacity is exhausted (bucket empty), new requests are rejected with HTTP 429
+
+### Implementation Details
+
+**Core Mechanism (`ratelimit.go:87-101`):**
+
+```go
+// Capacity refills based on elapsed time
+capacityToAdd = elapsed_time / interval * rate
+capacity = min(capacity + capacityToAdd, maxCapacity)
+```
+
+**Example:** With `requests_per_minute: 60`
+- Bucket starts with 60 capacity slots
+- Each second, 1 slot is added back (60/60 = 1 per second)
+- Maximum capacity is always 60
+- Requests consume 1 slot each
+
+### Integration in Webhook Handler
+
+**Location:** `internal/app/handlers/webhook.go:75-80`
+
+Rate limiting happens **before** any processing:
+
+```
+1. Webhook received → POST /webhook
+2. Rate limiter check → rateLimiter.Allow()
+3a. If capacity available → Process webhook normally
+3b. If no capacity → Return HTTP 429 + log + metric
+```
+
+### Configuration
+
+**config.yaml:**
+```yaml
+rate_limit:
+  enabled: true                # Enable/disable rate limiting
+  requests_per_minute: 60      # Max requests per minute
+```
+
+**Environment variables:**
+```bash
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_REQUESTS_PER_MINUTE=30
+```
+
+### Rate Limiter Lifecycle
+
+**Initialization (`application.go:120-124`):**
+- Only created if `cfg.RateLimit.Enabled = true`
+- Uses `ratelimit.PerMinute(rate)` convenience constructor
+- Passed to webhook handler during setup
+
+**Request Handling (`webhook.go:75-80`):**
+```go
+if rateLimiter != nil && !rateLimiter.Allow() {
+    log.Warn("Rate limit exceeded")
+    metrics.IncrementWebhookReceived("rate_limited")
+    http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+    return
+}
+```
+
+### Key Features
+
+**Non-blocking Check**
+- `Allow()` returns immediately (true/false)
+- No waiting - requests are either accepted or rejected instantly
+
+**Automatic Refill**
+- Capacity is recalculated on every `Allow()` call
+- Based on elapsed time since last refill
+- Smooth distribution over time (not burst-then-wait)
+
+**Thread-safe**
+- Uses mutex to protect capacity state
+- Safe for concurrent webhook requests
+
+**Observability**
+- Rate-limited requests logged as warnings
+- Tracked in metrics as "rate_limited" event type
+- Helps identify if rate limit is too restrictive
+
+### Use Cases
+
+**Protect from webhook floods:**
+- Prevents overwhelming the queue
+- Protects downstream services (Git, Claude)
+- Ensures fair resource allocation
+
+**Prevent abuse:**
+- Limits impact of misconfigured webhooks
+- Protects against accidental DoS
+- Maintains service availability
+
+**Compliance:**
+- Enforce organization rate policies
+- Control costs (especially Claude API usage)
+- Manage infrastructure load
+
+### Example Scenarios
+
+**Scenario 1: Normal Load (within limit)**
+```
+Time: 0s → Request arrives → Capacity: 60 → Allow ✓
+Time: 1s → Request arrives → Capacity: 60 → Allow ✓
+Time: 2s → Request arrives → Capacity: 60 → Allow ✓
+```
+
+**Scenario 2: Burst Traffic (exceeding limit)**
+```
+requests_per_minute: 60 (1 per second average)
+
+Time: 0.0s → 30 requests in 1 second → Capacity: 30 → All allowed ✓
+Time: 0.5s → 20 more requests → Capacity: 10 → All allowed ✓
+Time: 1.0s → 15 more requests → Capacity: 1 (refilled) → 1 allowed ✓, 14 rejected ✗
+Time: 2.0s → 5 requests → Capacity: 2 (refilled) → 2 allowed ✓, 3 rejected ✗
+```
+
+The bucket allows short bursts but enforces the long-term rate.
+
+### Why This Design?
+
+1. **Simple** - Easy to understand and configure
+2. **Efficient** - O(1) time complexity, minimal memory
+3. **Fair** - Allows bursts while enforcing average rate
+4. **Flexible** - Can be disabled or reconfigured per environment
+5. **Observable** - Clear metrics and logging for monitoring
+
+### Alternative: Per-Project Rate Limiting
+
+Currently, rate limiting is **global** (all webhooks share one bucket). Future enhancement could add **per-project rate limiting**:
+
+```go
+// Future enhancement idea
+rateLimiters map[string]*RateLimiter  // projectKey → limiter
+```
+
+This would allow different projects to have different rate limits.
+
 ## Key Design Principles
 
 ### Separation of Concerns

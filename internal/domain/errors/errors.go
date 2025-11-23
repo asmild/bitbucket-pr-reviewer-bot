@@ -10,46 +10,46 @@ type ErrorCode string
 
 const (
 	// Infrastructure errors
-	ErrorCodeTimeout         ErrorCode = "TIMEOUT"
-	ErrorCodeNetworkFailure  ErrorCode = "NETWORK_FAILURE"
+	ErrorCodeTimeout           ErrorCode = "TIMEOUT"
+	ErrorCodeNetworkFailure    ErrorCode = "NETWORK_FAILURE"
 	ErrorCodeRateLimitExceeded ErrorCode = "RATE_LIMIT_EXCEEDED"
 
 	// VCS (Version Control System) errors
-	ErrorCodeVCSUnauthorized  ErrorCode = "VCS_UNAUTHORIZED"
-	ErrorCodeVCSNotFound      ErrorCode = "VCS_NOT_FOUND"
+	ErrorCodeVCSUnauthorized   ErrorCode = "VCS_UNAUTHORIZED"
+	ErrorCodeVCSNotFound       ErrorCode = "VCS_NOT_FOUND"
 	ErrorCodeVCSInvalidPayload ErrorCode = "VCS_INVALID_PAYLOAD"
-	ErrorCodeVCSAPIError      ErrorCode = "VCS_API_ERROR"
+	ErrorCodeVCSAPIError       ErrorCode = "VCS_API_ERROR"
 
 	// Git repository errors
-	ErrorCodeGitCloneFailed   ErrorCode = "GIT_CLONE_FAILED"
-	ErrorCodeGitUpdateFailed  ErrorCode = "GIT_UPDATE_FAILED"
-	ErrorCodeGitAccessDenied  ErrorCode = "GIT_ACCESS_DENIED"
+	ErrorCodeGitCloneFailed  ErrorCode = "GIT_CLONE_FAILED"
+	ErrorCodeGitUpdateFailed ErrorCode = "GIT_UPDATE_FAILED"
+	ErrorCodeGitAccessDenied ErrorCode = "GIT_ACCESS_DENIED"
 
 	// AI Reviewer errors
-	ErrorCodeReviewerTimeout  ErrorCode = "REVIEWER_TIMEOUT"
-	ErrorCodeReviewerFailed   ErrorCode = "REVIEWER_FAILED"
-	ErrorCodeReviewerInvalid  ErrorCode = "REVIEWER_INVALID_RESPONSE"
+	ErrorCodeReviewerTimeout ErrorCode = "REVIEWER_TIMEOUT"
+	ErrorCodeReviewerFailed  ErrorCode = "REVIEWER_FAILED"
+	ErrorCodeReviewerInvalid ErrorCode = "REVIEWER_INVALID_RESPONSE"
 
-	// Template errors
-	ErrorCodeTemplateNotFound ErrorCode = "TEMPLATE_NOT_FOUND"
-	ErrorCodeTemplateInvalid  ErrorCode = "TEMPLATE_INVALID"
+	// Profile errors
+	ErrorCodeProfileNotFound ErrorCode = "PROFILE_NOT_FOUND"
+	ErrorCodeProfileInvalid  ErrorCode = "PROFILE_INVALID"
 
 	// Configuration errors
-	ErrorCodeConfigInvalid    ErrorCode = "CONFIG_INVALID"
-	ErrorCodeConfigMissing    ErrorCode = "CONFIG_MISSING"
+	ErrorCodeConfigInvalid ErrorCode = "CONFIG_INVALID"
+	ErrorCodeConfigMissing ErrorCode = "CONFIG_MISSING"
 
 	// Queue errors
-	ErrorCodeQueueFull        ErrorCode = "QUEUE_FULL"
-	ErrorCodeQueueClosed      ErrorCode = "QUEUE_CLOSED"
+	ErrorCodeQueueFull   ErrorCode = "QUEUE_FULL"
+	ErrorCodeQueueClosed ErrorCode = "QUEUE_CLOSED"
 
 	// Validation errors
 	ErrorCodeValidationFailed ErrorCode = "VALIDATION_FAILED"
 
 	// Circuit breaker errors
-	ErrorCodeCircuitOpen      ErrorCode = "CIRCUIT_OPEN"
+	ErrorCodeCircuitOpen ErrorCode = "CIRCUIT_OPEN"
 
 	// Unknown/unexpected errors
-	ErrorCodeUnknown          ErrorCode = "UNKNOWN"
+	ErrorCodeUnknown ErrorCode = "UNKNOWN"
 )
 
 // DomainError represents a structured error with context and metadata
@@ -157,11 +157,9 @@ func GetMetadata(err error) map[string]interface{} {
 
 // Common pre-defined errors
 var (
-	ErrCircuitOpen      = New(ErrorCodeCircuitOpen, "circuit breaker is open")
-	ErrQueueFull        = New(ErrorCodeQueueFull, "queue is full")
-	ErrQueueClosed      = New(ErrorCodeQueueClosed, "queue is closed")
-	ErrConfigInvalid    = New(ErrorCodeConfigInvalid, "configuration is invalid")
-	ErrUnauthorized     = New(ErrorCodeVCSUnauthorized, "unauthorized access")
-	ErrNotFound         = New(ErrorCodeVCSNotFound, "resource not found")
-	ErrTemplateNotFound = New(ErrorCodeTemplateNotFound, "template not found")
+	ErrCircuitOpen  = New(ErrorCodeCircuitOpen, "circuit breaker is open")
+	ErrQueueFull    = New(ErrorCodeQueueFull, "queue is full")
+	ErrQueueClosed  = New(ErrorCodeQueueClosed, "queue is closed")
+	ErrUnauthorized = New(ErrorCodeVCSUnauthorized, "unauthorized access")
+	ErrNotFound     = New(ErrorCodeVCSNotFound, "resource not found")
 )
