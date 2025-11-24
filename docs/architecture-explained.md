@@ -469,6 +469,122 @@ rateLimiters map[string]*RateLimiter  // projectKey → limiter
 
 This would allow different projects to have different rate limits.
 
+## Startup Validation System
+
+**Location:** `internal/app/validator/validator.go`
+
+The application performs comprehensive startup validation **before** accepting any webhooks. This ensures all dependencies are available and properly configured.
+
+### Validation Checks
+
+The validator runs automatically when the application starts (`main.go:37-42`):
+
+```go
+validationResult := validator.ValidateStartup(cfg, logger)
+validationResult.LogResults(logger)
+
+if !validationResult.IsValid() {
+    logger.Fatal("Startup validation failed - exiting")
+}
+```
+
+### What Gets Validated
+
+**1. Configuration (`validator.go:95-135`)**
+- Bitbucket username and token are set
+- Event type is valid (`pr_opened` or `comment_added`)
+- Server port is in valid range (1-65535)
+- Claude timeout is positive
+
+**2. Claude CLI (`validator.go:138-171`)**
+- `claude` command is available in PATH
+- Claude CLI version check (`claude --version`)
+- Authentication validation with 15-second timeout
+  - Executes test prompt: `claude -p "hello" --model haiku`
+  - Detects invalid credentials (timeout or error messages)
+- Bitbucket MCP is configured (`claude mcp list`)
+  - Checks for `@atlassian-dc-mcp/bitbucket` package
+  - Provides installation instructions if missing
+
+**3. Git (`validator.go:174-201`)**
+- `git` command is available in PATH
+- Git version check (`git --version`)
+
+**4. Profiles (`validator.go:204-251`)**
+- Profiles directory exists
+- Default profile file exists (`profiles/default.md`)
+- Default profile is not empty
+- Warns about missing project-specific profiles (non-fatal)
+
+**5. Directory Permissions (`validator.go:275-301`)**
+- Git base directory (`./projects`) is writable
+- Logs directory (`./logs`) is writable (if file logging enabled)
+
+### Error Reporting
+
+Validation errors are accumulated and reported together:
+
+```
+Startup Dependencies Check Failed
+
+1. Claude CLI: Claude CLI is not installed or not in PATH
+  Solution: Install Claude CLI from https://docs.anthropic.com/en/docs/claude-code
+
+2. Profiles: Default profile file does not exist: profiles/default.md
+  Solution: Create default profile: touch profiles/default.md
+
+Please fix the above issues and restart the application.
+```
+
+### Success Output
+
+When all checks pass:
+
+```
+✓ Claude CLI: 2.0.46 (Claude Code)
+✓ Claude CLI is authenticated
+✓ Bitbucket MCP server is configured
+✓ git version 2.39.5 (Apple Git-154)
+✓ Profiles: Found default profile at profiles/default.md
+✓ Git base directory: ./projects (writable)
+✓ Logs directory: ./logs (writable)
+All startup dependency checks passed
+
+Application started successfully - ready to process webhooks
+```
+
+### Why This Design?
+
+**Fail Fast**
+- Detect configuration issues immediately at startup
+- Don't accept webhooks if dependencies are broken
+- Clear error messages guide users to fix problems
+
+**Security**
+- Validates Claude authentication before processing any PRs
+- Ensures Bitbucket MCP is properly configured
+- Checks file permissions to prevent runtime failures
+
+**User Experience**
+- Single check provides complete dependency status
+- Actionable error messages with exact commands to fix issues
+- Success indicators confirm everything is ready
+
+### Authentication Validation Details
+
+The Claude authentication check uses a timeout-based approach:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+cmd := exec.CommandContext(ctx, "claude", "-p", "hello", "--model", "haiku")
+
+// If timeout occurs → invalid credentials (command hangs)
+// If error messages → not authenticated
+// If success → properly authenticated
+```
+
+Invalid credentials cause the Claude CLI to hang, so a 15-second timeout detects this condition and reports a clear error.
+
 ## Key Design Principles
 
 ### Separation of Concerns
