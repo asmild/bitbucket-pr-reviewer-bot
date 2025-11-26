@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/errors"
-	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/models"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/ports"
 )
 
@@ -28,6 +27,7 @@ type Client struct {
 
 // Config holds Bitbucket client configuration
 type Config struct {
+	BaseURL  string
 	Username string
 	Token    string
 	Timeout  time.Duration
@@ -40,7 +40,7 @@ func NewClient(cfg Config, logger ports.Logger) *Client {
 	}
 
 	return &Client{
-		baseURL:  "", // Will be set from webhook payload
+		baseURL:  cfg.BaseURL,
 		username: cfg.Username,
 		token:    cfg.Token,
 		httpClient: &http.Client{
@@ -170,74 +170,6 @@ func (c *Client) RemoveCommentReaction(ctx context.Context, projectKey, repoSlug
 	return nil
 }
 
-// GetPullRequest retrieves pull request information
-func (c *Client) GetPullRequest(ctx context.Context, projectKey, repoSlug string, prID int) (*models.PullRequest, error) {
-	url := fmt.Sprintf("%s/rest/api/1.0/projects/%s/repos/%s/pull-requests/%d",
-		c.baseURL, projectKey, repoSlug, prID)
-
-	data, err := c.get(ctx, url)
-	if err != nil {
-		return nil, errors.Wrap(errors.ErrorCodeVCSAPIError,
-			"failed to get pull request",
-			err,
-		).WithMetadata("project", projectKey).
-			WithMetadata("repo", repoSlug).
-			WithMetadata("pr_id", prID)
-	}
-
-	// Parse the response
-	var response struct {
-		ID          int    `json:"id"`
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Author      struct {
-			User struct {
-				Name string `json:"name"`
-			} `json:"user"`
-		} `json:"author"`
-		FromRef struct {
-			DisplayID string `json:"displayId"`
-		} `json:"fromRef"`
-		ToRef struct {
-			DisplayID string `json:"displayId"`
-		} `json:"toRef"`
-		Links struct {
-			Self []struct {
-				Href string `json:"href"`
-			} `json:"self"`
-		} `json:"links"`
-	}
-
-	if err := json.Unmarshal(data, &response); err != nil {
-		return nil, errors.Wrap(errors.ErrorCodeVCSInvalidPayload,
-			"failed to parse pull request response",
-			err,
-		)
-	}
-
-	// Construct clone URL from base URL
-	cloneURL := fmt.Sprintf("%s/scm/%s/%s.git", c.baseURL, projectKey, repoSlug)
-
-	// Get PR URL
-	prURL := c.baseURL + "/projects/" + projectKey + "/repos/" + repoSlug + "/pull-requests/" + fmt.Sprint(prID)
-	if len(response.Links.Self) > 0 {
-		prURL = response.Links.Self[0].Href
-	}
-
-	return models.NewPullRequest(
-		response.ID,
-		projectKey,
-		repoSlug,
-		response.Title,
-		response.Description,
-		response.Author.User.Name,
-		response.FromRef.DisplayID,
-		response.ToRef.DisplayID,
-		cloneURL,
-		prURL,
-	)
-}
-
 // ValidateWebhookSignature validates the webhook signature
 func (c *Client) ValidateWebhookSignature(payload []byte, signature, secret string) bool {
 	// Implementation for Bitbucket webhook signature validation
@@ -252,7 +184,6 @@ func (c *Client) SetBaseURL(baseURL string) {
 }
 
 // HTTP request helpers
-
 func (c *Client) doRequest(ctx context.Context, method, url string, body []byte) (*http.Response, error) {
 	var bodyReader io.Reader
 	if body != nil {
@@ -390,14 +321,9 @@ func (et *emojiTracker) remove(commentID int) {
 // emojiToBitbucket converts common emoji names to Bitbucket reaction names
 func emojiToBitbucket(emoji string) string {
 	emojiMap := map[string]string{
-		"EYES":       "eyes",
-		"THINKING":   "thinking_face",
-		"PROCESSING": "eyes",
-		"THUMBSUP":   "thumbsup",
-		"THUMBSDOWN": "thumbsdown",
-		"CONFUSED":   "confused",
-		"TADA":       "tada",
-		"X":          "x",
+		"PROCESSING":       "eyes",
+		"X":                "x",
+		"WHITE_CHECK_MARK": "white_check_mark",
 	}
 
 	if mapped, ok := emojiMap[emoji]; ok {

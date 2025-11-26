@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/errors"
@@ -51,12 +50,13 @@ func (s *ReviewService) ReviewPullRequest(ctx context.Context, pr *models.PullRe
 
 	s.logger.Info("Starting PR review",
 		"project", pr.ProjectKey,
-		"repo", pr.RepositoryID,
+		"repo", pr.RepositorySlug,
 		"pr_id", pr.ID,
 		"author", pr.Author,
 	)
 
 	s.metrics.IncrementReviewStarted(pr.ProjectKey)
+	s.metrics.IncrementUniquePRReviewed(pr.ProjectKey, pr.RepositorySlug, pr.ID)
 
 	// Add processing emoji reaction if manual trigger
 	if pr.IsManualTrigger() {
@@ -65,15 +65,9 @@ func (s *ReviewService) ReviewPullRequest(ctx context.Context, pr *models.PullRe
 		}
 	}
 
-	// Perform the review
-	result, err := s.performReview(ctx, pr)
+	// Perform the review (Claude will post comments via MCP)
+	_, err := s.performReview(ctx, pr)
 	if err != nil {
-		s.handleReviewError(ctx, pr, err)
-		return err
-	}
-
-	// Post the review comment
-	if err := s.postReviewComment(ctx, pr, result); err != nil {
 		s.handleReviewError(ctx, pr, err)
 		return err
 	}
@@ -86,6 +80,10 @@ func (s *ReviewService) ReviewPullRequest(ctx context.Context, pr *models.PullRe
 	if pr.IsManualTrigger() {
 		if err := s.removeReaction(ctx, pr, "PROCESSING"); err != nil {
 			s.logger.Warn("Failed to remove processing reaction", "error", err)
+		}
+		// Add success reaction
+		if err := s.addReaction(ctx, pr, "WHITE_CHECK_MARK"); err != nil {
+			s.logger.Warn("Failed to add success reaction", "error", err)
 		}
 	}
 
@@ -143,44 +141,9 @@ func (s *ReviewService) getRepository(ctx context.Context, pr *models.PullReques
 }
 
 // postReviewComment posts the review result as a comment
-func (s *ReviewService) postReviewComment(ctx context.Context, pr *models.PullRequest, result *models.ReviewResult) error {
-	comment := s.formatReviewComment(result)
-
-	err := s.vcsClient.PostComment(ctx, pr.ProjectKey, pr.RepositoryID, pr.ID, comment)
-	if err != nil {
-		return errors.Wrap(errors.ErrorCodeVCSAPIError,
-			"failed to post review comment",
-			err,
-		).WithMetadata("project", pr.ProjectKey).
-			WithMetadata("pr_id", pr.ID)
-	}
-
-	return nil
-}
-
-// formatReviewComment formats the review result into a comment
-func (s *ReviewService) formatReviewComment(result *models.ReviewResult) string {
-	comment := result.Comment
-
-	// Add metadata footer
-	footer := fmt.Sprintf("\n\n---\n*Reviewed by %s in %.2fs*",
-		result.ReviewerType,
-		result.Duration.Seconds(),
-	)
-
-	return comment + footer
-}
-
 // handleReviewError handles errors during the review process
 func (s *ReviewService) handleReviewError(ctx context.Context, pr *models.PullRequest, err error) {
 	errorType := string(errors.GetCode(err))
-
-	s.logger.Error("PR review failed",
-		"project", pr.ProjectKey,
-		"pr_id", pr.ID,
-		"error_type", errorType,
-		"error", err,
-	)
 
 	s.metrics.IncrementReviewFailed(pr.ProjectKey, errorType)
 
@@ -199,17 +162,8 @@ func (s *ReviewService) handleReviewError(ctx context.Context, pr *models.PullRe
 
 // getErrorEmoji returns the appropriate emoji for an error type
 func (s *ReviewService) getErrorEmoji(err error) string {
-	code := errors.GetCode(err)
-	switch code {
-	case errors.ErrorCodeTimeout, errors.ErrorCodeReviewerTimeout:
-		return "CONFUSED"
-	case errors.ErrorCodeGitCloneFailed, errors.ErrorCodeGitUpdateFailed:
-		return "CONFUSED"
-	case errors.ErrorCodeCircuitOpen:
-		return "CONFUSED"
-	default:
-		return "CONFUSED"
-	}
+	// Use X emoji for all error types - more visible than confused
+	return "X"
 }
 
 // addReaction adds an emoji reaction to a comment
@@ -217,7 +171,7 @@ func (s *ReviewService) addReaction(ctx context.Context, pr *models.PullRequest,
 	if pr.CommentID == 0 {
 		return nil
 	}
-	return s.vcsClient.AddCommentReaction(ctx, pr.ProjectKey, pr.RepositoryID, pr.ID, pr.CommentID, emoji)
+	return s.vcsClient.AddCommentReaction(ctx, pr.ProjectKey, pr.RepositorySlug, pr.ID, pr.CommentID, emoji)
 }
 
 // removeReaction removes an emoji reaction from a comment
@@ -225,5 +179,5 @@ func (s *ReviewService) removeReaction(ctx context.Context, pr *models.PullReque
 	if pr.CommentID == 0 {
 		return nil
 	}
-	return s.vcsClient.RemoveCommentReaction(ctx, pr.ProjectKey, pr.RepositoryID, pr.ID, pr.CommentID, emoji)
+	return s.vcsClient.RemoveCommentReaction(ctx, pr.ProjectKey, pr.RepositorySlug, pr.ID, pr.CommentID, emoji)
 }

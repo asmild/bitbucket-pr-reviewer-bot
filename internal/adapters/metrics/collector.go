@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/ports"
@@ -20,6 +21,7 @@ type Collector struct {
 	reviewStarted        *prometheus.CounterVec
 	reviewCompleted      *prometheus.CounterVec
 	reviewFailed         *prometheus.CounterVec
+	uniquePRReviewed     *prometheus.CounterVec
 	reviewDuration       *prometheus.HistogramVec
 	queueSize            prometheus.Gauge
 	gitCloneDuration     prometheus.Histogram
@@ -62,6 +64,14 @@ func NewCollector(logger ports.Logger) *Collector {
 				Help:      "Total number of failed reviews",
 			},
 			[]string{"project", "error_type"},
+		),
+		uniquePRReviewed: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: MetricsNamespace,
+				Name:      "unique_pr_reviewed_total",
+				Help:      "Total number of unique PRs reviewed (each PR counted once regardless of retries)",
+			},
+			[]string{"project", "repo", "pr_id"},
 		),
 		reviewDuration: promauto.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -125,6 +135,12 @@ func (c *Collector) IncrementReviewCompleted(projectKey, status string) {
 // IncrementReviewFailed increments review failed counter
 func (c *Collector) IncrementReviewFailed(projectKey, errorType string) {
 	c.reviewFailed.WithLabelValues(projectKey, errorType).Inc()
+}
+
+// IncrementUniquePRReviewed increments unique PR reviewed counter
+func (c *Collector) IncrementUniquePRReviewed(projectKey, repoSlug string, prID int) {
+	prIDStr := fmt.Sprintf("%d", prID)
+	c.uniquePRReviewed.WithLabelValues(projectKey, repoSlug, prIDStr).Inc()
 }
 
 // ObserveReviewDuration observes review duration

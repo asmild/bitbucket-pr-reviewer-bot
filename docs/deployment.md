@@ -80,7 +80,7 @@ For each repository or project:
 2. Click **Create webhook**
 3. Configure webhook:
    - **Name**: `PR Review Bot`
-   - **URL**: `https://your-server.com/webhook/bitbucket/pr`
+   - **URL**: `https://your-server.com/webhook/bitbucket`
    - **Status**: Active
    - **SSL/TLS**: Verify (if using HTTPS)
    - **Secret**: Generate strong secret (save for configuration)

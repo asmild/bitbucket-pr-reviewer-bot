@@ -38,7 +38,7 @@ func NewRepository(cfg Config, logger ports.Logger) *Repository {
 
 // Clone clones a repository to the local filesystem
 func (r *Repository) Clone(ctx context.Context, pr *models.PullRequest, credentials ports.Credentials) (string, error) {
-	localPath := r.GetLocalPath(pr.ProjectKey, pr.RepositoryID)
+	localPath := r.GetLocalPath(pr.ProjectKey, pr.RepositorySlug)
 
 	// Ensure parent directory exists
 	if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
@@ -53,7 +53,7 @@ func (r *Repository) Clone(ctx context.Context, pr *models.PullRequest, credenti
 
 	r.logger.Info("Cloning repository",
 		"project", pr.ProjectKey,
-		"repo", pr.RepositoryID,
+		"repo", pr.RepositorySlug,
 		"path", localPath,
 	)
 
@@ -67,12 +67,12 @@ func (r *Repository) Clone(ctx context.Context, pr *models.PullRequest, credenti
 			fmt.Sprintf("git clone failed: %s", sanitizedOutput),
 			err,
 		).WithMetadata("project", pr.ProjectKey).
-			WithMetadata("repo", pr.RepositoryID)
+			WithMetadata("repo", pr.RepositorySlug)
 	}
 
 	r.logger.Info("Repository cloned successfully",
 		"project", pr.ProjectKey,
-		"repo", pr.RepositoryID,
+		"repo", pr.RepositorySlug,
 		"path", localPath,
 	)
 
@@ -131,9 +131,9 @@ func (r *Repository) Update(ctx context.Context, localPath, branch string, crede
 
 // GetOrUpdate gets a repository (cloning if necessary, updating if exists)
 func (r *Repository) GetOrUpdate(ctx context.Context, pr *models.PullRequest, credentials ports.Credentials) (string, error) {
-	localPath := r.GetLocalPath(pr.ProjectKey, pr.RepositoryID)
+	localPath := r.GetLocalPath(pr.ProjectKey, pr.RepositorySlug)
 
-	if r.Exists(pr.ProjectKey, pr.RepositoryID) {
+	if r.Exists(pr.ProjectKey, pr.RepositorySlug) {
 		// Repository exists, update it
 		r.logger.Debug("Repository exists locally, updating",
 			"path", localPath,

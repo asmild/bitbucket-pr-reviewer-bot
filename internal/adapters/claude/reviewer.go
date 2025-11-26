@@ -132,11 +132,6 @@ func (r *Reviewer) IsAvailable(ctx context.Context) error {
 
 // executeClaude executes the Claude CLI with the given prompt
 func (r *Reviewer) executeClaude(ctx context.Context, request *ports.ReviewRequest) (string, error) {
-	r.logger.Debug("Executing Claude CLI",
-		"model", r.modelName,
-		"workdir", request.RepositoryPath,
-	)
-
 	// Prepare command
 	cmd := exec.CommandContext(ctx, "claude",
 		"--dangerously-skip-permissions",
@@ -166,21 +161,22 @@ func (r *Reviewer) executeClaude(ctx context.Context, request *ports.ReviewReque
 			return "", ctx.Err()
 		}
 
-		r.logger.Error("Claude CLI execution failed",
+		stdoutStr := stdout.String()
+		stderrStr := stderr.String()
+
+		// Log at DEBUG level with details - full error will be logged at higher level
+		r.logger.Debug("Claude CLI command failed",
 			"error", err,
-			"stderr", stderr.String(),
 			"duration", duration,
+			"has_stdout", stdoutStr != "",
+			"has_stderr", stderrStr != "",
 		)
-		return "", fmt.Errorf("claude execution failed: %w, stderr: %s", err, stderr.String())
+
+		// Include both outputs in error message for debugging
+		return "", fmt.Errorf("claude execution failed: %w, stdout: %s, stderr: %s", err, stdoutStr, stderrStr)
 	}
 
-	output := stdout.String()
-	r.logger.Debug("Claude CLI execution completed",
-		"duration", duration,
-		"output_length", len(output),
-	)
-
-	return output, nil
+	return stdout.String(), nil
 }
 
 // extractMetrics extracts metrics from Claude output

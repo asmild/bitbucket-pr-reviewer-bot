@@ -6,6 +6,8 @@
 # - server.port -> PORT
 # - claude.model -> CLAUDE_MODEL
 # - claude.timeout_minutes -> CLAUDE_TIMEOUT_CONFIG
+# - bitbucket.self_hosted -> BITBUCKET_SELF_HOSTED
+# - bitbucket.base_url -> BITBUCKET_BASE_URL  # Required if self_hosted is true
 # - bitbucket.user -> BITBUCKET_USER
 # - bitbucket.token -> BITBUCKET_TOKEN
 # - bitbucket.webhook_secret -> BITBUCKET_WEBHOOK_SECRET
@@ -47,6 +49,10 @@ claude:
 
 # Bitbucket Data Center configuration
 bitbucket:
+  # Set to true if using Bitbucket Data Center / Server (default: true)
+  self-hosted: true
+  # Base URL of Bitbucket instance (required for self-hosted)
+  base_url: "http://bitbucket.example.com"
   # Bitbucket username (required)
   user: ""
   # Bitbucket app password or personal access token (required)

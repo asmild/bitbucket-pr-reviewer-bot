@@ -12,6 +12,7 @@ type MetricsCollector interface {
 	IncrementReviewStarted(projectKey string)
 	IncrementReviewCompleted(projectKey, status string)
 	IncrementReviewFailed(projectKey, errorType string)
+	IncrementUniquePRReviewed(projectKey, repoSlug string, prID int)
 
 	// Histograms
 	ObserveReviewDuration(projectKey string, duration time.Duration)

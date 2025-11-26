@@ -8,17 +8,14 @@ import (
 
 // VCSClient defines the interface for version control system operations (e.g., Bitbucket)
 type VCSClient interface {
-	// PostComment posts a comment on a pull request
-	PostComment(ctx context.Context, projectKey, repoSlug string, prID int, comment string) error
+	//PostComment posts a comment on a pull request
+	//PostComment(ctx context.Context, projectKey, repoSlug string, prID int, comment string) error
 
 	// AddCommentReaction adds an emoji reaction to a comment
 	AddCommentReaction(ctx context.Context, projectKey, repoSlug string, prID, commentID int, emoji string) error
 
 	// RemoveCommentReaction removes an emoji reaction from a comment
 	RemoveCommentReaction(ctx context.Context, projectKey, repoSlug string, prID, commentID int, emoji string) error
-
-	// GetPullRequest retrieves pull request information
-	GetPullRequest(ctx context.Context, projectKey, repoSlug string, prID int) (*models.PullRequest, error)
 
 	// ValidateWebhookSignature validates the webhook signature
 	ValidateWebhookSignature(payload []byte, signature, secret string) bool
@@ -29,12 +26,18 @@ type VCSClient interface {
 
 // VCSWebhookParser defines the interface for parsing VCS webhook payloads
 type VCSWebhookParser interface {
-	// ParsePullRequestEvent parses a pull request webhook event
-	ParsePullRequestEvent(payload []byte) (*models.PullRequest, error)
+	// Parse parses the raw webhook payload and returns a parsed webhook event
+	Parse(payload []byte) (VCSWebhookEvent, error)
+}
 
-	// ParseCommentEvent parses a comment webhook event
-	ParseCommentEvent(payload []byte) (*models.PullRequest, error)
+// VCSWebhookEvent represents a parsed webhook event
+type VCSWebhookEvent interface {
+	// GetEventType returns the type of the webhook event (e.g., "pr:opened", "pr:comment:added")
+	GetEventType() string
 
-	// GetEventType extracts the event type from the payload
-	GetEventType(payload []byte) (string, error)
+	// GetPullRequest extracts pull request information from the event
+	GetPullRequest() (*models.PullRequest, error)
+
+	// GetComment returns comment information if this is a comment event, nil otherwise
+	GetComment() *models.Comment
 }

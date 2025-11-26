@@ -2,11 +2,12 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/adapters/bitbucket"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/config"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/errors"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/models"
@@ -22,6 +23,11 @@ type WebhookHandler struct {
 	metrics       ports.MetricsCollector
 	logger        ports.Logger
 	config        WebhookConfig
+}
+
+// TestPayload represents a test webhook payload
+type TestPayload struct {
+	Test bool `json:"test"`
 }
 
 // WebhookConfig holds webhook handler configuration
@@ -88,6 +94,14 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+	// Check for test payload
+	if h.isTestPayload(body) {
+		h.logger.Debug("Received test webhook payload")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Test webhook received"))
+		return
+	}
+
 	// Validate signature if secret is configured
 	if h.config.WebhookSecret != "" {
 		signature := r.Header.Get("X-Hub-Signature")
@@ -98,17 +112,25 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse event type
-	eventType, err := h.webhookParser.GetEventType(body)
+	// Parse webhook payload
+	webhookEvent, err := h.webhookParser.Parse(body)
 	if err != nil {
-		h.logger.Error("Failed to parse event type", "error", err)
+		h.logger.Error("Failed to parse webhook payload", "error", err)
 		http.Error(w, "Invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	// Get event type
+	eventType := webhookEvent.GetEventType()
+	if eventType == "" {
+		h.logger.Error("Event type is missing from payload")
+		http.Error(w, "Invalid payload: missing eventKey", http.StatusBadRequest)
 		return
 	}
 
 	h.metrics.IncrementWebhookReceived(eventType)
 
-	// Check if we should process this event type
+	// Check if we should process this event type (early return)
 	if !h.shouldProcessEvent(eventType) {
 		h.logger.Debug("Ignoring event type",
 			"event_type", eventType,
@@ -119,13 +141,44 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse webhook based on event type
-	pr, err := h.parseWebhook(eventType, body)
+	// Extract pull request
+	pr, err := webhookEvent.GetPullRequest()
 	if err != nil {
-		h.logger.Error("Failed to parse webhook", "error", err)
-		http.Error(w, "Failed to parse webhook", http.StatusBadRequest)
+		h.logger.Error("Failed to extract pull request", "error", err)
+		http.Error(w, "Failed to extract pull request", http.StatusBadRequest)
 		return
 	}
+
+	// For comment events, handle trigger logic
+	if eventType == EventTypeCommentAdded {
+		comment := webhookEvent.GetComment()
+		if comment == nil {
+			h.logger.Error("Comment event without comment data")
+			http.Error(w, "Invalid comment event", http.StatusBadRequest)
+			return
+		}
+
+		// Validate comment trigger
+		if !h.shouldProcessComment(comment) {
+			h.logger.Debug("Comment event ignored", "reason", "bot comment or invalid trigger")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("Comment ignored"))
+			return
+		}
+
+		// Set comment ID for manual trigger
+		pr = pr.WithCommentID(comment.ID)
+	}
+
+	// Log webhook details for debugging
+	h.logger.Debug("Webhook received",
+		"event_type", eventType,
+		"pr_id", pr.ID,
+		"pr_title", pr.Title,
+		"project_key", pr.ProjectKey,
+		"repo_slug", pr.RepositorySlug,
+		"manual_trigger", pr.IsManualTrigger(),
+	)
 
 	// Validate project
 	if !h.isProjectAllowed(pr.ProjectKey) {
@@ -134,20 +187,6 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		)
 		http.Error(w, "Project not authorized", http.StatusForbidden)
 		return
-	}
-
-	// For comment events, validate trigger
-	if eventType == EventTypeCommentAdded && !pr.IsManualTrigger() {
-		h.logger.Debug("Comment event without manual trigger, ignoring")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Comment does not contain trigger"))
-		return
-	}
-
-	// Extract base URL from clone URL and set it on the VCS client
-	baseURL := bitbucket.ExtractBaseURL(pr.CloneURL)
-	if baseURL != "" {
-		h.vcsClient.SetBaseURL(baseURL)
 	}
 
 	// Enqueue the PR for review
@@ -189,27 +228,64 @@ func (h *WebhookHandler) shouldProcessEvent(eventType string) bool {
 	}
 }
 
-// parseWebhook parses the webhook payload based on event type
-func (h *WebhookHandler) parseWebhook(eventType string, body []byte) (*models.PullRequest, error) {
-	switch eventType {
-	case EventTypePROpened:
-		return h.webhookParser.ParsePullRequestEvent(body)
-	case EventTypeCommentAdded:
-		pr, err := h.webhookParser.ParseCommentEvent(body)
-		if err != nil {
-			return nil, err
-		}
+// shouldProcessComment checks if a comment should trigger a review
+func (h *WebhookHandler) shouldProcessComment(comment *models.Comment) bool {
+	// Debug log the comment details before validation
+	h.logger.Debug("Processing comment",
+		"comment_id", comment.ID,
+		"author_name", comment.AuthorName,
+		"author_display_name", comment.AuthorDisplayName,
+		"text_preview", truncateString(comment.Text, 100),
+		"bot_username", h.config.BitbucketUsername,
+		"trigger_keyword", h.config.TriggerKeyword,
+	)
 
-		// For comment events, we need to validate the trigger
-		// This is a simplified check - in reality, you'd parse the comment text
-		// from the payload and check for the trigger keyword
-		return pr, nil
+	// Check 1: Ignore comments from the bot itself to prevent infinite loops
+	if comment.AuthorName == h.config.BitbucketUsername || comment.AuthorDisplayName == h.config.BitbucketUsername {
+		h.logger.Debug("Ignoring comment from bot itself",
+			"author_name", comment.AuthorName,
+			"author_display_name", comment.AuthorDisplayName,
+		)
+		return false
+	}
 
-	default:
-		return nil, errors.New(errors.ErrorCodeVCSInvalidPayload,
-			"unsupported event type: "+eventType,
+	// Check 2: Ignore comments that look like bot-generated reviews
+	// Bot reviews always contain "Reviewed by" pattern
+	commentTextLower := strings.ToLower(comment.Text)
+	if strings.Contains(commentTextLower, "reviewed by") &&
+		strings.Contains(commentTextLower, "in ") &&
+		strings.Contains(commentTextLower, "s*") {
+		h.logger.Debug("Ignoring bot-generated review comment")
+		return false
+	}
+
+	// Check 3: Verify comment mentions the bot (e.g., @bot-username)
+	botMention := "@" + h.config.BitbucketUsername
+	hasMention := strings.Contains(comment.Text, botMention)
+	if !hasMention {
+		h.logger.Debug("Comment does not mention bot",
+			"bot_mention", botMention,
+		)
+		return false
+	}
+
+	// Check 4: Verify comment contains trigger keyword
+	hasTrigger := strings.Contains(comment.Text, h.config.TriggerKeyword)
+	if !hasTrigger {
+		h.logger.Debug("Comment does not contain trigger keyword",
+			"trigger_keyword", h.config.TriggerKeyword,
 		)
 	}
+
+	return hasTrigger
+}
+
+// truncateString truncates a string to a maximum length
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // isProjectAllowed checks if a project is in the allowed list
@@ -225,5 +301,17 @@ func (h *WebhookHandler) isProjectAllowed(projectKey string) bool {
 		}
 	}
 
+	return false
+}
+
+// isTestPayload checks if the payload is a test payload {"test": true}
+func (h *WebhookHandler) isTestPayload(body []byte) bool {
+	// Simple check for test payload
+	if err := json.Unmarshal(body, &TestPayload{}); err == nil {
+		var testPayload TestPayload
+		if err := json.Unmarshal(body, &testPayload); err == nil {
+			return testPayload.Test
+		}
+	}
 	return false
 }

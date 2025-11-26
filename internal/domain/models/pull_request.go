@@ -10,8 +10,8 @@ import (
 // PullRequest represents a pull request with all necessary information for review
 type PullRequest struct {
 	// Identifiers
-	ID         int
-	CommentID  int // For manual trigger via comment
+	ID        int
+	CommentID int // For manual trigger via comment
 
 	// Metadata
 	Title       string
@@ -24,23 +24,25 @@ type PullRequest struct {
 	DestinationBranch string
 
 	// Repository information
-	ProjectKey   string
-	RepositoryID string
-	CloneURL     string
+	ProjectKey     string
+	RepositorySlug string
+	RepositoryID   int
+	CloneURL       string
 }
 
 // NewPullRequest creates a new PullRequest with validation
 func NewPullRequest(
-	id int,
-	projectKey, repoID string,
+	id, repoId int,
+	projectKey, repoSlug string,
 	title, description, author string,
 	sourceBranch, destBranch string,
 	cloneURL, url string,
 ) (*PullRequest, error) {
 	pr := &PullRequest{
 		ID:                id,
+		RepositoryID:      repoId,
 		ProjectKey:        projectKey,
-		RepositoryID:      repoID,
+		RepositorySlug:    repoSlug,
 		Title:             title,
 		Description:       description,
 		Author:            author,
@@ -65,12 +67,12 @@ func (pr *PullRequest) Validate() error {
 		validationErrors = append(validationErrors, "ID must be positive")
 	}
 
-	if strings.TrimSpace(pr.ProjectKey) == "" {
-		validationErrors = append(validationErrors, "ProjectKey is required")
+	if pr.RepositoryID <= 0 {
+		validationErrors = append(validationErrors, "RepositoryID is required")
 	}
 
-	if strings.TrimSpace(pr.RepositoryID) == "" {
-		validationErrors = append(validationErrors, "RepositoryID is required")
+	if strings.TrimSpace(pr.ProjectKey) == "" {
+		validationErrors = append(validationErrors, "ProjectKey is required")
 	}
 
 	if strings.TrimSpace(pr.Title) == "" {
@@ -117,7 +119,7 @@ func (pr *PullRequest) IsManualTrigger() bool {
 
 // GetRepositoryPath returns a unique path for the repository
 func (pr *PullRequest) GetRepositoryPath() string {
-	return fmt.Sprintf("%s/%s", pr.ProjectKey, pr.RepositoryID)
+	return fmt.Sprintf("%s/%s", pr.ProjectKey, pr.RepositorySlug)
 }
 
 // String returns a human-readable representation of the PR
@@ -140,6 +142,24 @@ func NewReviewContext(pr *PullRequest, template string) *ReviewContext {
 		PullRequest: pr,
 		Template:    template,
 		ProjectKey:  pr.ProjectKey,
-		RepoSlug:    pr.RepositoryID,
+		RepoSlug:    pr.RepositorySlug,
+	}
+}
+
+// Comment represents a comment on a pull request
+type Comment struct {
+	ID                int
+	Text              string
+	AuthorName        string
+	AuthorDisplayName string
+}
+
+// NewComment creates a new Comment
+func NewComment(id int, text, authorName, authorDisplayName string) *Comment {
+	return &Comment{
+		ID:                id,
+		Text:              text,
+		AuthorName:        authorName,
+		AuthorDisplayName: authorDisplayName,
 	}
 }

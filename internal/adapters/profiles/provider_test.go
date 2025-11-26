@@ -149,6 +149,7 @@ func TestSubstituteVariables(t *testing.T) {
 
 	pr, _ := models.NewPullRequest(
 		123,
+		100, // repository ID
 		"PROJ",
 		"myrepo",
 		"Fix bug in auth",
@@ -329,6 +330,7 @@ This is the security profile with sufficient content to pass the 100 character m
 
 	pr, _ := models.NewPullRequest(
 		123,
+		100, // repository ID
 		"PROJ",
 		"myrepo",
 		"Test PR",

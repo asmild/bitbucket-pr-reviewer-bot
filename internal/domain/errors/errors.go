@@ -21,9 +21,10 @@ const (
 	ErrorCodeVCSAPIError       ErrorCode = "VCS_API_ERROR"
 
 	// Git repository errors
-	ErrorCodeGitCloneFailed  ErrorCode = "GIT_CLONE_FAILED"
-	ErrorCodeGitUpdateFailed ErrorCode = "GIT_UPDATE_FAILED"
-	ErrorCodeGitAccessDenied ErrorCode = "GIT_ACCESS_DENIED"
+	ErrorCodeGitCloneURLNotFound ErrorCode = "GIT_CLONE_URL_NOT_FOUND"
+	ErrorCodeGitCloneFailed      ErrorCode = "GIT_CLONE_FAILED"
+	ErrorCodeGitUpdateFailed     ErrorCode = "GIT_UPDATE_FAILED"
+	ErrorCodeGitAccessDenied     ErrorCode = "GIT_ACCESS_DENIED"
 
 	// AI Reviewer errors
 	ErrorCodeReviewerTimeout ErrorCode = "REVIEWER_TIMEOUT"

@@ -52,7 +52,7 @@ func NewProvider(cfg Config, logger ports.Logger) *Provider {
 // GetProfile retrieves the appropriate profile (template content) for a pull request
 func (p *Provider) GetProfile(ctx context.Context, pr *models.PullRequest) (string, error) {
 	// Determine profile name based on hierarchy
-	profileName := p.resolveProfileName(pr.ProjectKey, pr.RepositoryID)
+	profileName := p.resolveProfileName(pr.ProjectKey, pr.RepositorySlug)
 
 	// Load the profile file: <profile-name>.md
 	profilePath := filepath.Join(p.directory, profileName+".md")
@@ -61,7 +61,7 @@ func (p *Provider) GetProfile(ctx context.Context, pr *models.PullRequest) (stri
 		"profile", profileName,
 		"path", profilePath,
 		"project", pr.ProjectKey,
-		"repo", pr.RepositoryID,
+		"repo", pr.RepositorySlug,
 	)
 
 	content, err := os.ReadFile(profilePath)
@@ -176,7 +176,7 @@ func (p *Provider) substituteVariables(content string, pr *models.PullRequest) s
 		"{{title}}":             pr.Title,
 		"{{description}}":       pr.Description,
 		"{{author}}":            pr.Author,
-		"{{repository}}":        pr.RepositoryID,
+		"{{repository}}":        pr.RepositorySlug,
 		"{{sourceBranch}}":      pr.SourceBranch,
 		"{{destinationBranch}}": pr.DestinationBranch,
 		"{{repoCloneUrl}}":      pr.CloneURL,

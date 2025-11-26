@@ -106,7 +106,7 @@ docker run -d \
 
 1. Navigate to Repository/Project Settings → Webhooks
 2. Create webhook with:
-   - URL: `https://your-server.com/webhook/bitbucket/pr`
+   - URL: `https://your-server.com/webhook/bitbucket`
    - Secret: Your configured webhook secret
    - Events:
      - `Pull request opened` (for automatic reviews)
@@ -212,7 +212,7 @@ Returns Prometheus metrics including:
 ### Webhook
 
 ```
-POST /webhook/bitbucket/pr
+POST /webhook/bitbucket
 ```
 
 Receives Bitbucket webhook events for PR reviews.

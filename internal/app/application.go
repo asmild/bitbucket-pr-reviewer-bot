@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/adapters/bitbucket"
+	bitbucketdc "github.com/asmild/bitbucket-pr-reviewer-bot/internal/adapters/bitbucket-dc"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/adapters/circuitbreaker"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/adapters/claude"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/adapters/git"
@@ -80,13 +80,14 @@ func New(cfg *config.Config) (*Application, error) {
 	})
 
 	// Initialize VCS client and webhook parser
-	vcsClient := bitbucket.NewClient(bitbucket.Config{
+	vcsClient := bitbucketdc.NewClient(bitbucketdc.Config{
+		BaseURL:  cfg.Bitbucket.BaseURL,
 		Username: cfg.Bitbucket.User,
 		Token:    cfg.Bitbucket.Token,
 		Timeout:  30 * time.Second,
 	}, log)
 
-	webhookParser := bitbucket.NewWebhookParser()
+	webhookParser := bitbucketdc.NewWebhookParser()
 
 	// Initialize git repository
 	gitRepo := git.NewRepository(git.Config{
@@ -184,7 +185,7 @@ func (a *Application) initHTTPServer() error {
 	)
 
 	// Register routes
-	mux.HandleFunc("/webhook", webhookHandler.HandleWebhook)
+	mux.HandleFunc("/webhook/bitbucket", webhookHandler.HandleWebhook)
 	mux.HandleFunc("/health", handlers.HandleHealth(a.queue, a.circuitBreaker))
 	mux.Handle("/metrics", promhttp.Handler())
 

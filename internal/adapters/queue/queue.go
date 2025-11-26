@@ -111,7 +111,7 @@ func (q *Queue) Enqueue(ctx context.Context, pr *models.PullRequest) (int, error
 
 		// Add emoji reaction if manual trigger
 		if pr.IsManualTrigger() {
-			go q.addReactionAsync(ctx, pr, "CONFUSED")
+			go q.addReactionAsync(ctx, pr, "X")
 		}
 
 		return 0, errors.ErrQueueFull
@@ -154,7 +154,7 @@ func (q *Queue) addReactionAsync(ctx context.Context, pr *models.PullRequest, em
 		return
 	}
 
-	if err := q.vcsClient.AddCommentReaction(ctx, pr.ProjectKey, pr.RepositoryID, pr.ID, pr.CommentID, emoji); err != nil {
+	if err := q.vcsClient.AddCommentReaction(ctx, pr.ProjectKey, pr.RepositorySlug, pr.ID, pr.CommentID, emoji); err != nil {
 		q.logger.Warn("Failed to add queue full reaction",
 			"pr_id", pr.ID,
 			"error", err,

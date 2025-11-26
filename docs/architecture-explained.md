@@ -1,63 +1,112 @@
 # Architecture Explained
 
-## ReviewService vs Application
+## Architecture Overview
 
-### ReviewService (Domain Service - Business Logic)
+The application follows **Hexagonal Architecture** (Ports & Adapters) with clean separation between business logic and infrastructure.
 
-**Location:** `internal/domain/services/review_service.go`
-
-**Purpose:** Contains the **core business logic** for reviewing pull requests
-
-**Responsibilities:**
-1. Orchestrates the review workflow (clone repo → get profile → call AI → post comment)
-2. Coordinates between different ports (VCS, Git, AI, Profiles)
-3. Handles review errors and retries
-4. Records metrics
-5. Posts comments back to Bitbucket
-
-**Level:** Domain layer (business logic, no infrastructure concerns)
-
-**Used by:** Queue workers to actually perform reviews
-
-### Application (Composition Root)
-
-**Location:** `internal/app/application.go`
-
-**Purpose:** **Wires everything together** and manages application lifecycle
-
-**Responsibilities:**
-1. Dependency injection (creates and connects all components)
-2. HTTP server setup (webhook endpoints, health checks, metrics)
-3. Application lifecycle (Start/Stop)
-4. Configuration loading
-5. Exposes getters for testing/external access
-
-**Level:** Application layer (infrastructure, composition, lifecycle)
-
-**Used by:** `main.go` to bootstrap the entire application
-
-### The Relationship
+### Architecture Layers
 
 ```
-main.go
-  └─> Application (app)
-       ├─> HTTP Server (handles webhooks)
-       ├─> Queue (receives PRs from webhooks)
-       └─> ReviewService (does actual review work)
-            ├─> VCSClient (Bitbucket API)
-            ├─> GitRepository (clone/fetch)
-            ├─> AIReviewer (Claude CLI)
-            └─> ProfileProvider (templates)
+┌─────────────────────────────────────────────────────┐
+│                   main.go                           │
+│              (Bootstrap & Lifecycle)                │
+└───────────────────┬─────────────────────────────────┘
+                    │
+┌───────────────────▼─────────────────────────────────┐
+│              Application Layer                      │
+│          internal/app/application.go                │
+│                                                      │
+│  • Dependency injection (wires all components)     │
+│  • HTTP server (webhooks, health, metrics)         │
+│  • Application lifecycle (Start/Stop)              │
+│  • Configuration management                         │
+└───────────────────┬─────────────────────────────────┘
+                    │
+        ┌───────────┼───────────┐
+        │           │           │
+┌───────▼────┐ ┌───▼─────┐ ┌──▼──────────┐
+│   Queue    │ │ Handlers│ │   Domain    │
+│            │ │         │ │  Services   │
+│  Async     │ │ Webhook │ │             │
+│ Processing │ │ Health  │ │ReviewService│
+└───────┬────┘ └─────────┘ └──────┬──────┘
+        │                         │
+        └─────────────┬───────────┘
+                      │
+        ┌─────────────▼──────────────┐
+        │     Domain Layer           │
+        │  internal/domain/services/ │
+        │                            │
+        │   ReviewService            │
+        │   • Review orchestration   │
+        │   • Business logic         │
+        │   • Error handling         │
+        └─────────────┬──────────────┘
+                      │
+        ┌─────────────▼──────────────┐
+        │        Ports               │
+        │  internal/domain/ports/    │
+        │                            │
+        │  Interfaces:               │
+        │  • VCSClient               │
+        │  • GitRepository           │
+        │  • AIReviewer              │
+        │  • ProfileProvider         │
+        │  • MetricsCollector        │
+        └─────────────┬──────────────┘
+                      │
+        ┌─────────────▼──────────────┐
+        │       Adapters             │
+        │  internal/adapters/        │
+        │                            │
+        │  Implementations:          │
+        │  • Bitbucket client        │
+        │  • Git operations          │
+        │  • Claude CLI integration  │
+        │  • Profile loader          │
+        │  • Prometheus metrics      │
+        └────────────────────────────┘
 ```
 
-### In Hexagonal Architecture Terms
+### Component Responsibilities
 
-- **ReviewService** = Domain service (hexagon core - business logic)
-- **Application** = Composition root (outside hexagon - wires adapters to ports)
+**main.go**
+- Loads configuration
+- Creates Application instance
+- Runs startup validation
+- Handles shutdown signals
 
-The `Application` is the container that holds everything, while `ReviewService` is the brain that actually knows how to review code. The `Application` just connects the pieces and manages the HTTP server/queue lifecycle.
+**Application (`internal/app/application.go`)**
+- Creates all components (dependency injection)
+- Sets up HTTP server with routes
+- Starts/stops queue workers
+- Manages application lifecycle
+- Provides component access for testing
 
-## Flow Example
+**ReviewService (`internal/domain/services/review_service.go`)**
+- Orchestrates the review workflow
+- Executes: clone → load profile → AI review → post comment
+- Handles errors and adds reactions
+- Records metrics
+- Pure business logic - no infrastructure dependencies
+
+**Queue (`internal/adapters/queue/queue.go`)**
+- Receives PRs from webhook handler
+- Processes reviews asynchronously
+- Implements retry logic with exponential backoff
+- Moves failed items to Dead Letter Queue (DLQ)
+- Integrates with circuit breaker
+
+**Handlers (`internal/app/handlers/`)**
+- `webhook.go` - Validates and processes Bitbucket webhooks
+- `health.go` - Returns application health status
+
+**Adapters (`internal/adapters/`)**
+- Implement the ports (interfaces) from domain layer
+- Handle all external interactions (API calls, Git, file I/O)
+- Examples: Bitbucket API client, Git commands, Claude CLI execution
+
+### Request Flow
 
 1. **Bitbucket sends webhook** → HTTP handler in `Application`
 2. **Webhook handler** → Enqueues PR to `Queue`
@@ -229,7 +278,7 @@ Replaces placeholders with actual PR data:
 - `{{projectKey}}` → Project key
 - `{{prId}}` → PR ID number
 
-#### Step 3: ReviewRequest Created (`review_service.go:119`)
+#### Step 3: ReviewRequest Created (`review_service.go:117`)
 
 ```go
 reviewReq := ports.NewReviewRequest(pr, repoPath, profile, s.reviewTimeout)
@@ -237,7 +286,7 @@ reviewReq := ports.NewReviewRequest(pr, repoPath, profile, s.reviewTimeout)
 
 The processed profile is stored in `request.Template` field.
 
-#### Step 4: Claude Execution (`claude/reviewer.go:149`)
+#### Step 4: Claude Execution (`claude/reviewer.go:134`)
 
 ```go
 cmd.Stdin = bytes.NewBufferString(request.Template)
@@ -354,7 +403,7 @@ capacity = min(capacity + capacityToAdd, maxCapacity)
 Rate limiting happens **before** any processing:
 
 ```
-1. Webhook received → POST /webhook
+1. Webhook received → POST /webhook/bitbucket
 2. Rate limiter check → rateLimiter.Allow()
 3a. If capacity available → Process webhook normally
 3b. If no capacity → Return HTTP 429 + log + metric

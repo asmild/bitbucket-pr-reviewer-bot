@@ -75,6 +75,8 @@ type ClaudeConfig struct {
 }
 
 type BitbucketConfig struct {
+	SelfHosted         bool     `yaml:"self-hosted"`
+	BaseURL            string   `yaml:"base_url"`
 	User               string   `yaml:"user"`
 	Token              string   `yaml:"token"`
 	WebhookSecret      string   `yaml:"webhook_secret"`
@@ -136,6 +138,10 @@ type LoggingConfig struct {
 // 2. ./config.yaml (current directory)
 // 3. ~/.bb-pr-reviewer/config.yaml (user home)
 // 4. /etc/bb-pr-reviewer/config.yaml (system-wide)
+//
+// Environment variable mappings:
+// - BITBUCKET_SELF_HOSTED -> bitbucket.self-hosted
+// - BITBUCKET_BASE_URL -> bitbucket.base_url
 func Load() *Config {
 	// Find config file
 	configPath := FindConfigFile()
@@ -187,6 +193,8 @@ func getDefaultConfig() *Config {
 			TimeoutMinutes: 10,
 		},
 		Bitbucket: BitbucketConfig{
+			SelfHosted:         false,
+			BaseURL:            "",
 			AllowedProjectKeys: []string{},
 			EventType:          EventTypeCommentAdded,
 			TriggerKeyword:     "/review",
@@ -257,6 +265,12 @@ func applyEnvOverrides(cfg *Config) {
 	}
 
 	// Bitbucket overrides
+	if selfHosted := os.Getenv("BITBUCKET_SELF_HOSTED"); selfHosted != "" {
+		cfg.Bitbucket.SelfHosted = getEnvAsBool("BITBUCKET_SELF_HOSTED", cfg.Bitbucket.SelfHosted)
+	}
+	if baseURL := os.Getenv("BITBUCKET_BASE_URL"); baseURL != "" {
+		cfg.Bitbucket.BaseURL = baseURL
+	}
 	if user := os.Getenv("BITBUCKET_USER"); user != "" {
 		cfg.Bitbucket.User = user
 	}

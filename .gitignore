@@ -9,6 +9,7 @@ bin
 bb-pr-reviewer
 pr-reviewer
 .claude
+*.Dockerfile
 
 # Test binary, built with `go test -c`
 *.test
