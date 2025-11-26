@@ -183,6 +183,24 @@ func (c *Client) SetBaseURL(baseURL string) {
 	c.baseURL = baseURL
 }
 
+// TestConnection tests if the API is accessible with current credentials
+func (c *Client) TestConnection(ctx context.Context) error {
+	if c.baseURL == "" {
+		return errors.New(errors.ErrorCodeConfigMissing, "base URL is not configured")
+	}
+
+	// Try to list projects with limit=1 (minimal data transfer)
+	url := fmt.Sprintf("%s/rest/api/latest/projects?limit=1", c.baseURL)
+
+	_, err := c.get(ctx, url)
+	if err != nil {
+		// Error already wrapped with proper domain error codes from handleResponse
+		return err
+	}
+
+	return nil
+}
+
 // HTTP request helpers
 func (c *Client) doRequest(ctx context.Context, method, url string, body []byte) (*http.Response, error) {
 	var bodyReader io.Reader

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/config"
+	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/errors"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/ports"
 )
 
@@ -72,13 +73,22 @@ func (r *ValidationResult) LogResults(logger ports.Logger) {
 }
 
 // ValidateStartup checks all startup dependencies and requirements
-func ValidateStartup(cfg *config.Config, logger ports.Logger) *ValidationResult {
+func ValidateStartup(cfg *config.Config, logger ports.Logger, vcsClient ports.VCSClient) *ValidationResult {
 	result := &ValidationResult{}
 
 	logger.Info("Running startup dependency checks...")
 
 	// Check configuration
 	validateConfiguration(cfg, result)
+	if !result.IsValid() {
+		return result
+	}
+
+	// Validate VCS credentials
+	validateVCSCredentials(cfg, vcsClient, result)
+	if !result.IsValid() {
+		return result
+	}
 
 	// Check external dependencies
 	validateClaudeCLI(result)
@@ -95,6 +105,13 @@ func ValidateStartup(cfg *config.Config, logger ports.Logger) *ValidationResult 
 
 // validateConfiguration checks required configuration values
 func validateConfiguration(cfg *config.Config, result *ValidationResult) {
+	// Log Bitbucket platform type
+	if cfg.Bitbucket.SelfHosted {
+		result.AddInfo(fmt.Sprintf("✓ Bitbucket: Data Center / Server (base URL: %s)", cfg.Bitbucket.BaseURL))
+	} else {
+		result.AddInfo("✓ Bitbucket: Cloud")
+	}
+
 	if cfg.Bitbucket.User == "" {
 		result.AddError(
 			"Configuration",
@@ -108,6 +125,15 @@ func validateConfiguration(cfg *config.Config, result *ValidationResult) {
 			"Configuration",
 			"Bitbucket token is not configured",
 			"Set BITBUCKET_TOKEN environment variable or bitbucket.token in config.yaml",
+		)
+	}
+
+	// Validate self-hosted configuration
+	if cfg.Bitbucket.SelfHosted && cfg.Bitbucket.BaseURL == "" {
+		result.AddError(
+			"Configuration",
+			"Bitbucket base_url is required when self-hosted is true",
+			"Set BITBUCKET_BASE_URL environment variable or bitbucket.base_url in config.yaml (e.g., 'https://bitbucket.example.com')",
 		)
 	}
 
@@ -134,6 +160,42 @@ func validateConfiguration(cfg *config.Config, result *ValidationResult) {
 			"Set claude.timeout_minutes to a positive value (recommended: 5-30 minutes)",
 		)
 	}
+}
+
+// validateVCSCredentials tests VCS API credentials using the VCS client interface
+func validateVCSCredentials(cfg *config.Config, vcsClient ports.VCSClient, result *ValidationResult) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Test connection using the VCS client
+	err := vcsClient.TestConnection(ctx)
+	if err != nil {
+		// Parse error to provide helpful messages
+		errMsg := err.Error()
+		if err == errors.ErrUnauthorized {
+			result.AddError(
+				"VCS Credentials",
+				"Authentication failed - invalid credentials",
+				"Check your credentials configuration",
+			)
+		} else if strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "deadline exceeded") {
+			result.AddError(
+				"VCS Connection",
+				"Connection timed out",
+				"Check your network connection and VCS configuration",
+			)
+		} else {
+			result.AddError(
+				"VCS Connection",
+				fmt.Sprintf("Failed to connect: %v", err),
+				"Check your VCS configuration and network connection",
+			)
+		}
+		return
+	}
+
+	// Successfully authenticated
+	result.AddInfo(fmt.Sprintf("✓ VCS credentials: Valid (authenticated as %s)", cfg.Bitbucket.User))
 }
 
 // validateClaudeCLI checks if Claude CLI is installed and accessible

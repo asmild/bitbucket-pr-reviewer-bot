@@ -34,7 +34,7 @@ func main() {
 	logger := application.GetLogger()
 
 	// Validate startup dependencies
-	validationResult := validator.ValidateStartup(cfg, logger)
+	validationResult := validator.ValidateStartup(cfg, logger, application.GetVCSClient())
 	validationResult.LogResults(logger)
 
 	if !validationResult.IsValid() {

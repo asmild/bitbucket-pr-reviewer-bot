@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	bitbucketcloud "github.com/asmild/bitbucket-pr-reviewer-bot/internal/adapters/bitbucket-cloud"
 	bitbucketdc "github.com/asmild/bitbucket-pr-reviewer-bot/internal/adapters/bitbucket-dc"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/adapters/circuitbreaker"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/adapters/claude"
@@ -79,15 +80,30 @@ func New(cfg *config.Config) (*Application, error) {
 		},
 	})
 
-	// Initialize VCS client and webhook parser
-	vcsClient := bitbucketdc.NewClient(bitbucketdc.Config{
-		BaseURL:  cfg.Bitbucket.BaseURL,
-		Username: cfg.Bitbucket.User,
-		Token:    cfg.Bitbucket.Token,
-		Timeout:  30 * time.Second,
-	}, log)
+	// Initialize VCS client and webhook parser based on platform
+	var vcsClient ports.VCSClient
+	var webhookParser ports.VCSWebhookParser
 
-	webhookParser := bitbucketdc.NewWebhookParser()
+	if cfg.Bitbucket.SelfHosted {
+		// Bitbucket Data Center / Server
+		log.Info("Initializing Bitbucket Data Center adapter")
+		vcsClient = bitbucketdc.NewClient(bitbucketdc.Config{
+			BaseURL:  cfg.Bitbucket.BaseURL,
+			Username: cfg.Bitbucket.User,
+			Token:    cfg.Bitbucket.Token,
+			Timeout:  30 * time.Second,
+		}, log)
+		webhookParser = bitbucketdc.NewWebhookParser()
+	} else {
+		// Bitbucket Cloud
+		log.Info("Initializing Bitbucket Cloud adapter")
+		vcsClient = bitbucketcloud.NewClient(bitbucketcloud.Config{
+			Username: cfg.Bitbucket.User,
+			Token:    cfg.Bitbucket.Token,
+			Timeout:  30 * time.Second,
+		}, log)
+		webhookParser = bitbucketcloud.NewWebhookParser()
+	}
 
 	// Initialize git repository
 	gitRepo := git.NewRepository(git.Config{
@@ -254,6 +270,11 @@ func (a *Application) GetQueue() ports.ReviewQueue {
 // GetCircuitBreaker returns the circuit breaker instance
 func (a *Application) GetCircuitBreaker() ports.CircuitBreaker {
 	return a.circuitBreaker
+}
+
+// GetVCSClient returns the VCS client instance
+func (a *Application) GetVCSClient() ports.VCSClient {
+	return a.vcsClient
 }
 
 // initializeRateLimiter creates a rate limiter based on configuration

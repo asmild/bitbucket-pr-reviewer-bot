@@ -22,6 +22,9 @@ type VCSClient interface {
 
 	// SetBaseURL sets the base URL for the VCS API
 	SetBaseURL(baseURL string)
+
+	// TestConnection tests if the VCS API is accessible with current credentials
+	TestConnection(ctx context.Context) error
 }
 
 // VCSWebhookParser defines the interface for parsing VCS webhook payloads
