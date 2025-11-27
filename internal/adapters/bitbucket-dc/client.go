@@ -53,13 +53,20 @@ func NewClient(cfg Config, logger ports.Logger) *Client {
 	}
 }
 
-// PostComment posts a comment on a pull request
-func (c *Client) PostComment(ctx context.Context, projectKey, repoSlug string, prID int, comment string) error {
+// PostComment posts a comment on a pull request. If parentCommentID > 0, posts as a reply to that comment.
+func (c *Client) PostComment(ctx context.Context, projectKey, repoSlug string, prID int, comment string, parentCommentID int) error {
 	url := fmt.Sprintf("%s/rest/api/1.0/projects/%s/repos/%s/pull-requests/%d/comments",
 		c.baseURL, projectKey, repoSlug, prID)
 
 	payload := map[string]interface{}{
 		"text": comment,
+	}
+
+	// If parentCommentID is provided, add it to payload to create a reply
+	if parentCommentID > 0 {
+		payload["parent"] = map[string]interface{}{
+			"id": parentCommentID,
+		}
 	}
 
 	payloadBytes, err := json.Marshal(payload)
@@ -70,26 +77,49 @@ func (c *Client) PostComment(ctx context.Context, projectKey, repoSlug string, p
 		)
 	}
 
-	c.logger.Debug("Posting comment to PR",
-		"project", projectKey,
-		"repo", repoSlug,
-		"pr_id", prID,
-	)
+	if parentCommentID > 0 {
+		c.logger.Debug("Posting reply to comment",
+			"project", projectKey,
+			"repo", repoSlug,
+			"pr_id", prID,
+			"parent_comment_id", parentCommentID,
+		)
+	} else {
+		c.logger.Debug("Posting comment to PR",
+			"project", projectKey,
+			"repo", repoSlug,
+			"pr_id", prID,
+		)
+	}
 
 	_, err = c.post(ctx, url, payloadBytes)
 	if err != nil {
-		return errors.Wrap(errors.ErrorCodeVCSAPIError,
+		domainErr := errors.Wrap(errors.ErrorCodeVCSAPIError,
 			"failed to post comment",
 			err,
 		).WithMetadata("project", projectKey).
 			WithMetadata("repo", repoSlug).
 			WithMetadata("pr_id", prID)
+
+		if parentCommentID > 0 {
+			domainErr.WithMetadata("parent_comment_id", parentCommentID)
+		}
+
+		return domainErr
 	}
 
-	c.logger.Debug("Successfully posted comment to PR",
-		"project", projectKey,
-		"pr_id", prID,
-	)
+	if parentCommentID > 0 {
+		c.logger.Debug("Successfully posted reply to comment",
+			"project", projectKey,
+			"pr_id", prID,
+			"parent_comment_id", parentCommentID,
+		)
+	} else {
+		c.logger.Debug("Successfully posted comment to PR",
+			"project", projectKey,
+			"pr_id", prID,
+		)
+	}
 
 	return nil
 }

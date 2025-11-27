@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/errors"
@@ -19,6 +20,7 @@ type ReviewService struct {
 	logger          ports.Logger
 	credentials     ports.Credentials
 	reviewTimeout   int
+	wg              sync.WaitGroup
 }
 
 // NewReviewService creates a new ReviewService
@@ -58,12 +60,16 @@ func (s *ReviewService) ReviewPullRequest(ctx context.Context, pr *models.PullRe
 	s.metrics.IncrementReviewStarted(pr.ProjectKey)
 	s.metrics.IncrementUniquePRReviewed(pr.ProjectKey, pr.RepositorySlug, pr.ID)
 
-	// Add processing emoji reaction if manual trigger
-	if pr.IsManualTrigger() {
-		if err := s.addReaction(ctx, pr, "PROCESSING"); err != nil {
-			s.logger.Warn("Failed to add processing reaction", "error", err)
+	// Ensure repository cleanup after review (success or failure)
+	defer func() {
+		if err := s.gitRepo.Clean(pr.ProjectKey, pr.RepositorySlug); err != nil {
+			s.logger.Warn("Failed to clean repository after review",
+				"project", pr.ProjectKey,
+				"repo", pr.RepositorySlug,
+				"error", err,
+			)
 		}
-	}
+	}()
 
 	// Perform the review (Claude will post comments via MCP)
 	_, err := s.performReview(ctx, pr)
@@ -72,20 +78,10 @@ func (s *ReviewService) ReviewPullRequest(ctx context.Context, pr *models.PullRe
 		return err
 	}
 
-	// Success - update metrics and reactions
+	// Success - update metrics
 	duration := time.Since(startTime)
 	s.metrics.IncrementReviewCompleted(pr.ProjectKey, "success")
 	s.metrics.ObserveReviewDuration(pr.ProjectKey, duration)
-
-	if pr.IsManualTrigger() {
-		if err := s.removeReaction(ctx, pr, "PROCESSING"); err != nil {
-			s.logger.Warn("Failed to remove processing reaction", "error", err)
-		}
-		// Add success reaction
-		if err := s.addReaction(ctx, pr, "WHITE_CHECK_MARK"); err != nil {
-			s.logger.Warn("Failed to add success reaction", "error", err)
-		}
-	}
 
 	s.logger.Info("PR review completed successfully",
 		"project", pr.ProjectKey,
@@ -144,40 +140,5 @@ func (s *ReviewService) getRepository(ctx context.Context, pr *models.PullReques
 // handleReviewError handles errors during the review process
 func (s *ReviewService) handleReviewError(ctx context.Context, pr *models.PullRequest, err error) {
 	errorType := string(errors.GetCode(err))
-
 	s.metrics.IncrementReviewFailed(pr.ProjectKey, errorType)
-
-	// Add failure emoji reaction if manual trigger
-	if pr.IsManualTrigger() {
-		if remErr := s.removeReaction(ctx, pr, "PROCESSING"); remErr != nil {
-			s.logger.Warn("Failed to remove processing reaction", "error", remErr)
-		}
-
-		emoji := s.getErrorEmoji(err)
-		if addErr := s.addReaction(ctx, pr, emoji); addErr != nil {
-			s.logger.Warn("Failed to add error reaction", "error", addErr)
-		}
-	}
-}
-
-// getErrorEmoji returns the appropriate emoji for an error type
-func (s *ReviewService) getErrorEmoji(err error) string {
-	// Use X emoji for all error types - more visible than confused
-	return "X"
-}
-
-// addReaction adds an emoji reaction to a comment
-func (s *ReviewService) addReaction(ctx context.Context, pr *models.PullRequest, emoji string) error {
-	if pr.CommentID == 0 {
-		return nil
-	}
-	return s.vcsClient.AddCommentReaction(ctx, pr.ProjectKey, pr.RepositorySlug, pr.ID, pr.CommentID, emoji)
-}
-
-// removeReaction removes an emoji reaction from a comment
-func (s *ReviewService) removeReaction(ctx context.Context, pr *models.PullRequest, emoji string) error {
-	if pr.CommentID == 0 {
-		return nil
-	}
-	return s.vcsClient.RemoveCommentReaction(ctx, pr.ProjectKey, pr.RepositorySlug, pr.ID, pr.CommentID, emoji)
 }

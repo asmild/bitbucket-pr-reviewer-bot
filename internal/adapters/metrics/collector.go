@@ -2,7 +2,6 @@ package metrics
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/ports"
@@ -71,7 +70,7 @@ func NewCollector(logger ports.Logger) *Collector {
 				Name:      "unique_pr_reviewed_total",
 				Help:      "Total number of unique PRs reviewed (each PR counted once regardless of retries)",
 			},
-			[]string{"project", "repo", "pr_id"},
+			[]string{"project", "repo"},
 		),
 		reviewDuration: promauto.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -139,8 +138,7 @@ func (c *Collector) IncrementReviewFailed(projectKey, errorType string) {
 
 // IncrementUniquePRReviewed increments unique PR reviewed counter
 func (c *Collector) IncrementUniquePRReviewed(projectKey, repoSlug string, prID int) {
-	prIDStr := fmt.Sprintf("%d", prID)
-	c.uniquePRReviewed.WithLabelValues(projectKey, repoSlug, prIDStr).Inc()
+	c.uniquePRReviewed.WithLabelValues(projectKey, repoSlug).Inc()
 }
 
 // ObserveReviewDuration observes review duration

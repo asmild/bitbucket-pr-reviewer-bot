@@ -6,12 +6,47 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
 // Logger adapts slog.Logger to implement ports.Logger interface
 type Logger struct {
 	logger *slog.Logger
+}
+
+// rotatingFileWriter implements io.Writer with daily log rotation
+type rotatingFileWriter struct {
+	mu          sync.Mutex
+	file        *os.File
+	currentDate string
+	logDir      string
+}
+
+// Write implements io.Writer with automatic daily rotation
+func (w *rotatingFileWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	today := time.Now().Format("2006-01-02")
+
+	// Rotate if day changed
+	if today != w.currentDate {
+		// Close old file
+		if w.file != nil {
+			w.file.Close()
+		}
+
+		// Open new file for today
+		w.currentDate = today
+		logPath := filepath.Join(w.logDir, fmt.Sprintf("app-%s.log", today))
+		w.file, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return 0, fmt.Errorf("failed to open log file: %w", err)
+		}
+	}
+
+	return w.file.Write(p)
 }
 
 // Config holds logger configuration
@@ -45,20 +80,27 @@ func New(cfg Config) (*Logger, error) {
 		writers = append(writers, os.Stdout)
 	}
 
-	// File output (simple daily rotation)
+	// File output (automatic daily rotation)
 	if cfg.EnableFile {
 		if err := os.MkdirAll("./logs", 0755); err != nil {
 			return nil, fmt.Errorf("failed to create logs directory: %w", err)
 		}
 
-		// Create log file with date in filename for daily rotation
-		logFilename := filepath.Join("./logs", fmt.Sprintf("app-%s.log", time.Now().Format("2006-01-02")))
-		logFile, err := os.OpenFile(logFilename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		// Create rotating writer that automatically switches to new file each day
+		rotatingWriter := &rotatingFileWriter{
+			logDir:      "./logs",
+			currentDate: time.Now().Format("2006-01-02"),
+		}
+
+		// Open initial log file
+		logPath := filepath.Join("./logs", fmt.Sprintf("app-%s.log", rotatingWriter.currentDate))
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open log file: %w", err)
 		}
+		rotatingWriter.file = logFile
 
-		writers = append(writers, logFile)
+		writers = append(writers, rotatingWriter)
 	}
 
 	// Default to stdout if no writers configured

@@ -8,8 +8,8 @@ import (
 
 // VCSClient defines the interface for version control system operations (e.g., Bitbucket)
 type VCSClient interface {
-	//PostComment posts a comment on a pull request
-	//PostComment(ctx context.Context, projectKey, repoSlug string, prID int, comment string) error
+	// PostComment posts a comment on a pull request. If parentCommentID > 0, posts as a reply to that comment.
+	PostComment(ctx context.Context, projectKey, repoSlug string, prID int, comment string, parentCommentID int) error
 
 	// AddCommentReaction adds an emoji reaction to a comment
 	AddCommentReaction(ctx context.Context, projectKey, repoSlug string, prID, commentID int, emoji string) error

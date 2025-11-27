@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/services"
 )
 
-// Queue implements ports.ReviewQueue with Dead Letter Queue support
+// Queue implements ports.ReviewQueue
 type Queue struct {
 	reviewService  *services.ReviewService
 	circuitBreaker ports.CircuitBreaker
@@ -21,7 +22,6 @@ type Queue struct {
 
 	// Queue state
 	items      []*queueItem
-	dlqItems   []*dlqItem
 	mu         sync.Mutex
 	processing bool
 	running    bool
@@ -42,15 +42,6 @@ type queueItem struct {
 	queuedAt    time.Time
 	retryCount  int
 	lastAttempt time.Time
-}
-
-// dlqItem represents an item in the dead letter queue
-type dlqItem struct {
-	pr         *models.PullRequest
-	queuedAt   time.Time
-	failedAt   time.Time
-	lastError  error
-	retryCount int
 }
 
 // Config holds queue configuration
@@ -82,7 +73,6 @@ func NewQueue(
 		logger:         logger,
 		metrics:        metrics,
 		items:          make([]*queueItem, 0),
-		dlqItems:       make([]*dlqItem, 0),
 		itemCh:         make(chan *queueItem, cfg.QueueSize),
 		stopCh:         make(chan struct{}),
 		maxRetries:     cfg.MaxRetries,
@@ -111,7 +101,11 @@ func (q *Queue) Enqueue(ctx context.Context, pr *models.PullRequest) (int, error
 
 		// Add emoji reaction if manual trigger
 		if pr.IsManualTrigger() {
-			go q.addReactionAsync(ctx, pr, "X")
+			q.wg.Add(1)
+			go func(pr *models.PullRequest) {
+				defer q.wg.Done()
+				q.addReactionAsync(ctx, pr, "X")
+			}(pr)
 		}
 
 		return 0, errors.ErrQueueFull
@@ -136,13 +130,15 @@ func (q *Queue) Enqueue(ctx context.Context, pr *models.PullRequest) (int, error
 	// Update metrics
 	q.metrics.ObserveQueueSize(len(q.items))
 
-	// Send to channel (non-blocking)
+	// Send to channel (blocking, but should never block due to queue size check above)
 	select {
 	case q.itemCh <- item:
+		// Successfully sent to channel
 	case <-ctx.Done():
+		// Context cancelled, remove item from queue and return error
+		q.items = q.items[:len(q.items)-1]
+		q.metrics.ObserveQueueSize(len(q.items))
 		return 0, ctx.Err()
-	default:
-		q.logger.Warn("Queue channel full, item will be processed when space available")
 	}
 
 	return position, nil
@@ -178,7 +174,8 @@ func (q *Queue) Start(ctx context.Context) {
 	go q.worker(ctx)
 }
 
-// Stop gracefully stops the queue worker
+// Stop immediately stops the queue worker
+// Items in progress are abandoned - reviews can be re-run safely
 func (q *Queue) Stop(ctx context.Context) error {
 	q.mu.Lock()
 	if !q.running {
@@ -188,11 +185,12 @@ func (q *Queue) Stop(ctx context.Context) error {
 	q.running = false
 	q.mu.Unlock()
 
-	q.logger.Info("Stopping queue worker")
+	q.logger.Info("Stopping queue worker immediately")
 
+	// Close stopCh to signal all goroutines to stop
 	close(q.stopCh)
 
-	// Wait for worker to finish with timeout
+	// Wait briefly for goroutines to clean up, but don't block shutdown
 	done := make(chan struct{})
 	go func() {
 		q.wg.Wait()
@@ -201,12 +199,13 @@ func (q *Queue) Stop(ctx context.Context) error {
 
 	select {
 	case <-done:
-		q.logger.Info("Queue worker stopped gracefully")
-		return nil
-	case <-ctx.Done():
-		q.logger.Warn("Queue worker stop timed out")
-		return ctx.Err()
+		q.logger.Info("Queue worker stopped cleanly")
+	case <-time.After(1 * time.Second):
+		q.logger.Warn("Queue worker shutdown timeout (1s) - forcing stop")
+		// Goroutines will be killed when process exits
 	}
+
+	return nil
 }
 
 // GetSize returns the current queue size
@@ -221,41 +220,6 @@ func (q *Queue) IsRunning() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return q.running
-}
-
-// GetDLQSize returns the current dead letter queue size
-func (q *Queue) GetDLQSize() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return len(q.dlqItems)
-}
-
-// GetDLQItems returns a copy of dead letter queue items
-func (q *Queue) GetDLQItems() []DLQItem {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	items := make([]DLQItem, len(q.dlqItems))
-	for i, item := range q.dlqItems {
-		items[i] = DLQItem{
-			PR:         item.pr,
-			QueuedAt:   item.queuedAt,
-			FailedAt:   item.failedAt,
-			LastError:  item.lastError.Error(),
-			RetryCount: item.retryCount,
-		}
-	}
-
-	return items
-}
-
-// DLQItem represents a dead letter queue item for external use
-type DLQItem struct {
-	PR         *models.PullRequest
-	QueuedAt   time.Time
-	FailedAt   time.Time
-	LastError  string
-	RetryCount int
 }
 
 // worker processes items from the queue
@@ -285,6 +249,28 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem) {
 	q.mu.Unlock()
 
 	defer func() {
+		// Recover from panic to prevent worker crash
+		if r := recover(); r != nil {
+			q.logger.Error("Panic recovered in queue worker",
+				"panic", r,
+				"pr_id", item.pr.ID,
+				"project", item.pr.ProjectKey,
+				"repo", item.pr.RepositorySlug,
+			)
+
+			// Post failure comment about panic
+			comment := fmt.Sprintf("Review failed due to internal error (panic recovered).\n\nPlease try again or contact support if the issue persists.")
+			if err := q.vcsClient.PostComment(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, comment, item.pr.CommentID); err != nil {
+				q.logger.Error("Failed to post panic recovery comment", "error", err)
+			}
+
+			// Add error reaction if manual trigger
+			if item.pr.IsManualTrigger() {
+				q.vcsClient.RemoveCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "PROCESSING")
+				q.vcsClient.AddCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "X")
+			}
+		}
+
 		q.mu.Lock()
 		q.processing = false
 
@@ -304,6 +290,14 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem) {
 		"pr_id", item.pr.ID,
 		"retry_count", item.retryCount,
 	)
+
+	// Add processing reaction if manual trigger
+	if item.pr.IsManualTrigger() {
+		go func() {
+			q.vcsClient.RemoveCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "CLOCK2")
+			q.vcsClient.AddCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "PROCESSING")
+		}()
+	}
 
 	// Check if circuit breaker is open
 	if q.circuitBreaker.IsOpen() {
@@ -328,6 +322,13 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem) {
 			"project", item.pr.ProjectKey,
 			"pr_id", item.pr.ID,
 		)
+		// Add success reaction if manual trigger
+		if item.pr.IsManualTrigger() {
+			go func() {
+				q.vcsClient.RemoveCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "PROCESSING")
+				q.vcsClient.AddCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "WHITE_CHECK_MARK")
+			}()
+		}
 	}
 }
 
@@ -348,12 +349,21 @@ func (q *Queue) handleProcessingError(ctx context.Context, item *queueItem, err 
 		)
 		q.requeueItem(ctx, item)
 	} else {
-		// Move to dead letter queue
-		q.logger.Warn("Max retries reached or non-retryable error, moving to DLQ",
+		// Max retries reached or non-retryable error
+		q.logger.Warn("Max retries reached or non-retryable error",
 			"pr_id", item.pr.ID,
 			"retry_count", item.retryCount,
 		)
-		q.moveToDLQ(item, err)
+
+		// Add error reaction if manual trigger
+		if item.pr.IsManualTrigger() {
+			go func() {
+				q.vcsClient.RemoveCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "PROCESSING")
+				q.vcsClient.AddCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "X")
+			}()
+		}
+
+		q.postFailureComment(ctx, item, err)
 	}
 }
 
@@ -369,40 +379,48 @@ func (q *Queue) requeueItem(ctx context.Context, item *queueItem) {
 		"delay", backoffDelay,
 	)
 
-	// Requeue after delay
+	// Track goroutine and use stoppable timer
+	q.wg.Add(1)
 	go func() {
+		defer q.wg.Done()
+
+		timer := time.NewTimer(backoffDelay)
+		defer timer.Stop()
+
 		select {
-		case <-time.After(backoffDelay):
+		case <-timer.C:
+			// Backoff completed, try to requeue
 			select {
 			case q.itemCh <- item:
-			case <-ctx.Done():
-				q.logger.Warn("Context cancelled while requeueing",
-					"pr_id", item.pr.ID,
-				)
+				q.logger.Debug("Item requeued successfully", "pr_id", item.pr.ID)
+			case <-q.stopCh:
+				q.logger.Debug("Queue stopped while requeueing, item dropped", "pr_id", item.pr.ID)
 			}
-		case <-ctx.Done():
+		case <-q.stopCh:
+			// Immediate shutdown - drop the item
+			q.logger.Debug("Queue stopped during backoff, item dropped", "pr_id", item.pr.ID)
 		}
 	}()
 }
 
-// moveToDLQ moves an item to the dead letter queue
-func (q *Queue) moveToDLQ(item *queueItem, err error) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+// postFailureComment posts a failure comment on the PR
+func (q *Queue) postFailureComment(ctx context.Context, item *queueItem, err error) {
+	errorCode := errors.GetCode(err)
+	comment := fmt.Sprintf("Review failed after %d retries.\n\nError: %s", item.retryCount, string(errorCode))
 
-	dlqItem := &dlqItem{
-		pr:         item.pr,
-		queuedAt:   item.queuedAt,
-		failedAt:   time.Now(),
-		lastError:  err,
-		retryCount: item.retryCount,
-	}
-
-	q.dlqItems = append(q.dlqItems, dlqItem)
-
-	q.logger.Warn("Item moved to DLQ",
+	q.logger.Info("Posting failure comment",
 		"project", item.pr.ProjectKey,
 		"pr_id", item.pr.ID,
-		"dlq_size", len(q.dlqItems),
+		"is_reply", item.pr.IsManualTrigger(),
 	)
+
+	// If manually triggered, CommentID > 0 and will post as reply, otherwise posts as regular comment
+	postErr := q.vcsClient.PostComment(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, comment, item.pr.CommentID)
+
+	if postErr != nil {
+		q.logger.Error("Failed to post failure comment",
+			"pr_id", item.pr.ID,
+			"error", postErr,
+		)
+	}
 }

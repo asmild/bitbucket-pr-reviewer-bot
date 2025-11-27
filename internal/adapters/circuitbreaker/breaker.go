@@ -132,8 +132,21 @@ func (b *Breaker) transitionTo(newState ports.CircuitState) {
 	b.state = newState
 
 	if b.onStateChange != nil && oldState != newState {
-		// Call callback without holding lock to prevent deadlock
-		go b.onStateChange(oldState, newState)
+		// Copy state values before spawning goroutine to avoid race
+		from, to := oldState, newState
+
+		// Call callback in goroutine without holding lock to prevent deadlock
+		// Callback should be fast (metrics/logging), so no WaitGroup tracking needed
+		go func() {
+			// Recover from any panic in callback to prevent crashing the service
+			defer func() {
+				if r := recover(); r != nil {
+					// Can't log here as we don't have logger, but panic is recovered
+					_ = r
+				}
+			}()
+			b.onStateChange(from, to)
+		}()
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/config"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/errors"
@@ -20,6 +21,10 @@ type Provider struct {
 	defaultProfile  string
 	projectProfiles map[string]config.ProjectProfile
 	logger          ports.Logger
+
+	// In-memory cache for profile contents
+	cache   map[string]string
+	cacheMu sync.RWMutex
 }
 
 // Config holds profile provider configuration
@@ -46,6 +51,7 @@ func NewProvider(cfg Config, logger ports.Logger) *Provider {
 		defaultProfile:  cfg.DefaultProfile,
 		projectProfiles: cfg.ProjectProfiles,
 		logger:          logger,
+		cache:           make(map[string]string),
 	}
 }
 
@@ -54,36 +60,60 @@ func (p *Provider) GetProfile(ctx context.Context, pr *models.PullRequest) (stri
 	// Determine profile name based on hierarchy
 	profileName := p.resolveProfileName(pr.ProjectKey, pr.RepositorySlug)
 
-	// Load the profile file: <profile-name>.md
-	profilePath := filepath.Join(p.directory, profileName+".md")
+	// Try to get from cache first (read lock)
+	p.cacheMu.RLock()
+	cached, found := p.cache[profileName]
+	p.cacheMu.RUnlock()
 
-	p.logger.Debug("Loading review profile",
-		"profile", profileName,
-		"path", profilePath,
-		"project", pr.ProjectKey,
-		"repo", pr.RepositorySlug,
-	)
+	var profileContent string
+	if found {
+		p.logger.Debug("Profile loaded from cache",
+			"profile", profileName,
+			"project", pr.ProjectKey,
+			"repo", pr.RepositorySlug,
+		)
+		profileContent = cached
+	} else {
+		// Cache miss - load from disk
+		profilePath := filepath.Join(p.directory, profileName+".md")
 
-	content, err := os.ReadFile(profilePath)
-	if err != nil {
-		return "", errors.Wrap(errors.ErrorCodeProfileNotFound,
-			fmt.Sprintf("failed to load profile '%s'", profileName),
-			err,
-		).WithMetadata("profile", profileName).
-			WithMetadata("path", profilePath)
+		p.logger.Debug("Loading review profile from disk",
+			"profile", profileName,
+			"path", profilePath,
+			"project", pr.ProjectKey,
+			"repo", pr.RepositorySlug,
+		)
+
+		content, err := os.ReadFile(profilePath)
+		if err != nil {
+			return "", errors.Wrap(errors.ErrorCodeProfileNotFound,
+				fmt.Sprintf("failed to load profile '%s'", profileName),
+				err,
+			).WithMetadata("profile", profileName).
+				WithMetadata("path", profilePath)
+		}
+
+		profileContent = string(content)
+
+		// Validate profile structure
+		if err := p.ValidateProfile(profileContent); err != nil {
+			return "", err
+		}
+
+		// Store in cache (write lock)
+		p.cacheMu.Lock()
+		p.cache[profileName] = profileContent
+		p.cacheMu.Unlock()
+
+		p.logger.Debug("Profile loaded from disk and cached",
+			"profile", profileName,
+		)
 	}
 
-	profileContent := string(content)
-
-	// Validate profile structure
-	if err := p.ValidateProfile(profileContent); err != nil {
-		return "", err
-	}
-
-	// Substitute variables
+	// Substitute variables (always do this as PR data changes)
 	processed := p.substituteVariables(profileContent, pr)
 
-	p.logger.Debug("Profile loaded and processed successfully",
+	p.logger.Debug("Profile processed successfully",
 		"profile", profileName,
 		"content_length", len(processed),
 	)
@@ -119,7 +149,7 @@ func (p *Provider) ValidateProfile(profile string) error {
 	return nil
 }
 
-// ReloadProfiles reloads profiles from the filesystem
+// ReloadProfiles reloads profiles from the filesystem and clears the cache
 func (p *Provider) ReloadProfiles() error {
 	// Validate that profile directory exists
 	if _, err := os.Stat(p.directory); os.IsNotExist(err) {
@@ -138,7 +168,12 @@ func (p *Provider) ReloadProfiles() error {
 		)
 	}
 
-	p.logger.Info("Profiles reloaded",
+	// Clear cache to force reload on next request
+	p.cacheMu.Lock()
+	p.cache = make(map[string]string)
+	p.cacheMu.Unlock()
+
+	p.logger.Info("Profiles reloaded and cache cleared",
 		"count", len(profiles),
 		"directory", p.directory,
 	)

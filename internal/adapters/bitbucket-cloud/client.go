@@ -44,8 +44,8 @@ func NewClient(cfg Config, logger ports.Logger) *Client {
 	}
 }
 
-// PostComment posts a comment on a pull request
-func (c *Client) PostComment(ctx context.Context, projectKey, repoSlug string, prID int, comment string) error {
+// PostComment posts a comment on a pull request. If parentCommentID > 0, posts as a reply to that comment.
+func (c *Client) PostComment(ctx context.Context, projectKey, repoSlug string, prID int, comment string, parentCommentID int) error {
 	return fmt.Errorf("bitbucket cloud adapter: PostComment not implemented")
 }
 

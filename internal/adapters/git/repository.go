@@ -59,6 +59,10 @@ func (r *Repository) Clone(ctx context.Context, pr *models.PullRequest, credenti
 
 	// Create command with context for cancellation support
 	cmd := exec.CommandContext(ctx, "git", "clone", authURL, localPath)
+
+	// Disable terminal prompts to prevent hanging on credential requests
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Sanitize output to prevent credential leaks

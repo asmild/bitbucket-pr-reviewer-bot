@@ -419,6 +419,51 @@ Test new profiles:
 3. Trigger review and check output
 4. Iterate based on results
 
+## Profile Caching
+
+**Important:** Profiles are cached in memory after first load for performance.
+
+### How It Works
+
+1. **First Request**: Profile file is read from disk, validated, and cached in memory
+2. **Subsequent Requests**: Profile is served from cache (no disk I/O)
+3. **Variable Substitution**: Always performed on each request (PR-specific data)
+
+### Cache Behavior
+
+- Profiles are cached **per profile name** (e.g., `default`, `security-focused`)
+- Cache persists for the lifetime of the application
+- Thread-safe using RWMutex for concurrent access
+
+### Reloading Profiles
+
+To reload profiles after making changes, you have two options:
+
+#### Option 1: Restart Application (Recommended for Production)
+```bash
+# Stop the application
+kill -SIGTERM <pid>
+
+# Start the application (profiles will be loaded fresh)
+./pr-reviewer
+```
+
+#### Option 2: Call ReloadProfiles API (Future Enhancement)
+```bash
+# This endpoint is not yet implemented but could be added
+curl -X POST http://localhost:8080/admin/reload-profiles
+```
+
+### Development Workflow
+
+When developing profiles:
+
+1. **Make changes** to profile file (e.g., `profiles/custom-review.md`)
+2. **Restart application** to load changes
+3. **Test** by triggering a review
+
+**Note:** File changes are NOT automatically detected. You must restart the application to see profile changes.
+
 ## Profile Validation
 
 On startup, the application validates:
