@@ -1,0 +1,654 @@
+# Architecture Explained
+
+## Architecture Overview
+
+The application follows **Hexagonal Architecture** (Ports & Adapters) with clean separation between business logic and infrastructure.
+
+### Architecture Layers
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   main.go                           │
+│              (Bootstrap & Lifecycle)                │
+└───────────────────┬─────────────────────────────────┘
+                    │
+┌───────────────────▼─────────────────────────────────┐
+│              Application Layer                      │
+│          internal/app/application.go                │
+│                                                      │
+│  • Dependency injection (wires all components)     │
+│  • HTTP server (webhooks, health, metrics)         │
+│  • Application lifecycle (Start/Stop)              │
+│  • Configuration management                         │
+└───────────────────┬─────────────────────────────────┘
+                    │
+        ┌───────────┼───────────┐
+        │           │           │
+┌───────▼────┐ ┌───▼─────┐ ┌──▼──────────┐
+│   Queue    │ │ Handlers│ │   Domain    │
+│            │ │         │ │  Services   │
+│  Async     │ │ Webhook │ │             │
+│ Processing │ │ Health  │ │ReviewService│
+└───────┬────┘ └─────────┘ └──────┬──────┘
+        │                         │
+        └─────────────┬───────────┘
+                      │
+        ┌─────────────▼──────────────┐
+        │     Domain Layer           │
+        │  internal/domain/services/ │
+        │                            │
+        │   ReviewService            │
+        │   • Review orchestration   │
+        │   • Business logic         │
+        │   • Error handling         │
+        └─────────────┬──────────────┘
+                      │
+        ┌─────────────▼──────────────┐
+        │        Ports               │
+        │  internal/domain/ports/    │
+        │                            │
+        │  Interfaces:               │
+        │  • VCSClient               │
+        │  • GitRepository           │
+        │  • AIReviewer              │
+        │  • ProfileProvider         │
+        │  • MetricsCollector        │
+        └─────────────┬──────────────┘
+                      │
+        ┌─────────────▼──────────────┐
+        │       Adapters             │
+        │  internal/adapters/        │
+        │                            │
+        │  Implementations:          │
+        │  • Bitbucket client        │
+        │  • Git operations          │
+        │  • Claude CLI integration  │
+        │  • Profile loader          │
+        │  • Prometheus metrics      │
+        └────────────────────────────┘
+```
+
+### Component Responsibilities
+
+**main.go**
+- Loads configuration
+- Creates Application instance
+- Runs startup validation
+- Handles shutdown signals
+
+**Application (`internal/app/application.go`)**
+- Creates all components (dependency injection)
+- Sets up HTTP server with routes
+- Starts/stops queue workers
+- Manages application lifecycle
+- Provides component access for testing
+
+**ReviewService (`internal/domain/services/review_service.go`)**
+- Orchestrates the review workflow
+- Executes: clone → load profile → AI review → post comment
+- Handles errors and adds reactions
+- Records metrics
+- Pure business logic - no infrastructure dependencies
+
+**Queue (`internal/adapters/queue/queue.go`)**
+- Receives PRs from webhook handler
+- Processes reviews asynchronously
+- Implements retry logic with exponential backoff
+- Moves failed items to Dead Letter Queue (DLQ)
+- Integrates with circuit breaker
+
+**Handlers (`internal/app/handlers/`)**
+- `webhook.go` - Validates and processes Bitbucket webhooks
+- `health.go` - Returns application health status
+
+**Adapters (`internal/adapters/`)**
+- Implement the ports (interfaces) from domain layer
+- Handle all external interactions (API calls, Git, file I/O)
+- Examples: Bitbucket API client, Git commands, Claude CLI execution
+
+### Request Flow
+
+1. **Bitbucket sends webhook** → HTTP handler in `Application`
+2. **Webhook handler** → Enqueues PR to `Queue`
+3. **Queue worker** → Calls `ReviewService.ReviewPullRequest()`
+4. **ReviewService** → Orchestrates:
+   - Clone repository via `GitRepository`
+   - Get review template via `ProfileProvider`
+   - Call AI via `AIReviewer`
+   - Post comment via `VCSClient`
+   - Record metrics via `MetricsCollector`
+5. **Result** → Queue marks job complete, metrics updated
+
+## Queue System
+
+**Location:** `internal/adapters/queue/queue.go`
+
+The Queue is a critical component that enables **asynchronous processing** of pull request reviews.
+
+### How Queue.Start(ctx) Works
+
+When `a.queue.Start(ctx)` is called during application startup (`application.go:198`), it:
+
+1. **Marks the queue as running** (thread-safe with mutex)
+2. **Spawns a background worker goroutine** (`queue.go:177`) that runs continuously
+3. **Worker goroutine listens on three channels:**
+   - `itemCh` - Receives PRs to review (from webhook enqueues)
+   - `stopCh` - Receives stop signal for graceful shutdown
+   - `ctx.Done()` - Context cancellation signal
+
+### Worker Implementation
+
+**Location:** `internal/adapters/queue/queue.go`
+
+**`worker()` goroutine (line 262-279):**
+- Infinite loop listening on channels
+- Receives items from `itemCh` channel
+- Calls `processItem()` for each PR
+
+**`processItem()` method (line 282-332):**
+- Line 301: Logs "Processing PR from queue" ← **work starts here**
+- Line 309: Checks circuit breaker status
+- Line 318: Calls `reviewService.ReviewPullRequest()` ← **actual review**
+- Line 326: Logs "PR processed successfully" ← **work complete**
+
+### Logging Timeline
+
+1. **Webhook received** → `webhook.go` → `queue.Enqueue()` called
+2. **Item enqueued** → `queue.go:129` → "PR added to queue"
+3. **Worker picks up** → `queue.go:269` → item received from channel
+4. **Processing starts** → `queue.go:301` → "Processing PR from queue"
+5. **Review happens** → `queue.go:318` → ReviewService does the work
+6. **Processing done** → `queue.go:326` → "PR processed successfully"
+
+### Queue Processing Flow
+
+```
+Webhook → Enqueue(pr) → itemCh channel → Worker goroutine
+                                        ↓
+                                    processItem()
+                                        ↓
+                            Check circuit breaker
+                                        ↓
+                        ReviewService.ReviewPullRequest()
+                                        ↓
+                    ┌───────────────────┴────────────────┐
+                    ↓                                    ↓
+                Success                              Failure
+                    ↓                                    ↓
+            Remove from queue                    Retry with backoff?
+                    ↓                                    ↓
+            Metrics updated                      Yes: Requeue (5s, 10s, 15s)
+                                                 No: Move to Dead Letter Queue
+```
+
+### Key Features
+
+**Asynchronous Processing**
+- Webhooks return immediately (200 OK)
+- Reviews happen in background
+- Multiple PRs can be queued simultaneously
+
+**Circuit Breaker Protection**
+- If too many reviews fail, circuit opens
+- Prevents cascading failures
+- Automatically closes after reset timeout
+
+**Automatic Retries**
+- Failed reviews are retried up to 3 times (configurable)
+- Exponential backoff: 5s → 10s → 15s
+- Only retries on retryable errors (network issues, timeouts)
+
+**Dead Letter Queue (DLQ)**
+- Non-retryable errors or exhausted retries → moved to DLQ
+- DLQ items preserved for manual inspection
+- Accessible via `/health` endpoint
+
+**Graceful Shutdown**
+- `Stop()` closes the stopCh channel
+- Waits for current review to finish
+- Uses sync.WaitGroup for coordination
+
+### Configuration
+
+```go
+queue.Config{
+    MaxRetries:  3,    // Maximum retry attempts
+    ChannelSize: 100,  // Buffered channel size
+}
+```
+
+### Why This Design?
+
+1. **Non-blocking webhooks** - Bitbucket requires fast webhook responses
+2. **Resilience** - Automatic retries handle transient failures
+3. **Observability** - Failed items are tracked in DLQ
+4. **Resource control** - Circuit breaker prevents resource exhaustion
+5. **Clean shutdown** - No reviews are lost during application restart
+
+## Profile System (Review Templates)
+
+**Location:** `internal/adapters/profiles/provider.go`
+
+Profiles are the **prompt templates** that tell Claude how to review the code. They're markdown files containing instructions for the AI.
+
+### How Profiles Are Loaded and Passed to Claude
+
+**Flow:** `ReviewService.performReview()` → `ProfileProvider.GetProfile()` → `Claude.Review()`
+
+#### Step 1: Profile Selection (`review_service.go:110`)
+
+```go
+profile, err := s.profileProvider.GetProfile(ctx, pr)
+```
+
+#### Step 2: ProfileProvider.GetProfile() (`profiles/provider.go:56-94`)
+
+The profile provider does the following:
+
+**a) Resolves profile name** (line 58):
+```
+Resolution hierarchy:
+1. Repository-specific override (e.g., PROJ1/my-repo → "critical-review")
+2. Project-level profile (e.g., PROJ1 → "custom")
+3. Default profile (e.g., "default")
+```
+
+**b) Loads profile file** (line 58, 67):
+```go
+profilePath := filepath.Join(p.directory, profileName+".md")
+content, err := os.ReadFile(profilePath)
+```
+Example: `./profiles/default.md`
+
+**c) Validates structure** (line 82):
+- Checks for required sections: `Role:`, `Goal:`, `PR:`
+- Checks minimum length (100 characters)
+
+**d) Substitutes variables** (line 87):
+
+Replaces placeholders with actual PR data:
+- `{{prUrl}}` → PR URL (e.g., https://bitbucket.example.com/projects/PROJ/repos/repo/pull-requests/123)
+- `{{title}}` → PR title
+- `{{description}}` → PR description
+- `{{author}}` → Author name
+- `{{repository}}` → Repository slug
+- `{{sourceBranch}}` → Source branch name
+- `{{destinationBranch}}` → Destination branch name
+- `{{repoCloneUrl}}` → Clone URL
+- `{{projectKey}}` → Project key
+- `{{prId}}` → PR ID number
+
+#### Step 3: ReviewRequest Created (`review_service.go:117`)
+
+```go
+reviewReq := ports.NewReviewRequest(pr, repoPath, profile, s.reviewTimeout)
+```
+
+The processed profile is stored in `request.Template` field.
+
+#### Step 4: Claude Execution (`claude/reviewer.go:134`)
+
+```go
+cmd.Stdin = bytes.NewBufferString(request.Template)
+```
+
+The profile template is **piped to Claude CLI via stdin**:
+
+```bash
+cd /path/to/cloned/repo
+claude --model sonnet --output-format text < profile_content
+```
+
+Claude reads the prompt from stdin and reviews the code in the current directory.
+
+### Complete Profile Flow Diagram
+
+```
+ReviewService.performReview()
+    ↓
+ProfileProvider.GetProfile()
+    ↓
+1. Resolve profile name
+   (repo-specific → project → default)
+    ↓
+2. Read: ./profiles/{profileName}.md
+    ↓
+3. Validate structure
+   (check Role:, Goal:, PR: sections)
+    ↓
+4. Substitute variables
+   ({{prUrl}}, {{title}}, {{author}}, etc.)
+    ↓
+5. Return processed template string
+    ↓
+Create ReviewRequest(pr, repoPath, template, timeout)
+    ↓
+Claude.Review() → executeClaude()
+    ↓
+cmd.Dir = repoPath (set working directory)
+cmd.Stdin = template content
+    ↓
+Execute: claude --model sonnet < template
+    ↓
+Claude reads prompt and reviews code in repo directory
+    ↓
+Return review comment + metrics
+```
+
+### Profile Configuration Example
+
+**config.yaml:**
+```yaml
+profiles:
+  directory: ./profiles
+  default: default
+  projects:
+    PROJ1:
+      profile: custom              # All repos in PROJ1 use "custom"
+      repositories:
+        critical-repo: security    # Override for specific repo
+```
+
+**File structure:**
+```
+profiles/
+├── default.md             # Default review instructions
+├── custom.md              # Custom instructions for PROJ1
+└── security.md            # Security-focused for critical-repo
+```
+
+### Why This Design?
+
+1. **Flexible** - Different review styles for different projects/repos
+2. **Customizable** - Easy to modify prompts without code changes
+3. **Context-aware** - Variables inject PR-specific information
+4. **Validated** - Ensures prompts have required structure
+5. **Simple** - Just markdown files, no complex templating engine
+
+## Rate Limiting System
+
+**Location:** `internal/infrastructure/ratelimit/ratelimit.go`
+
+The Rate Limiter protects the webhook endpoint from being overwhelmed by too many requests. It implements the **token bucket algorithm** to control the rate of incoming webhooks.
+
+### How Rate Limiting Works
+
+**Algorithm:** Token Bucket (also called Leaky Bucket)
+
+The rate limiter maintains a "bucket" with a certain **capacity** of available request slots:
+- Each incoming webhook request consumes 1 capacity slot
+- Capacity refills automatically over time at a configured rate
+- If capacity is exhausted (bucket empty), new requests are rejected with HTTP 429
+
+### Implementation Details
+
+**Core Mechanism (`ratelimit.go:87-101`):**
+
+```go
+// Capacity refills based on elapsed time
+capacityToAdd = elapsed_time / interval * rate
+capacity = min(capacity + capacityToAdd, maxCapacity)
+```
+
+**Example:** With `requests_per_minute: 60`
+- Bucket starts with 60 capacity slots
+- Each second, 1 slot is added back (60/60 = 1 per second)
+- Maximum capacity is always 60
+- Requests consume 1 slot each
+
+### Integration in Webhook Handler
+
+**Location:** `internal/app/handlers/webhook.go:75-80`
+
+Rate limiting happens **before** any processing:
+
+```
+1. Webhook received → POST /webhook/bitbucket
+2. Rate limiter check → rateLimiter.Allow()
+3a. If capacity available → Process webhook normally
+3b. If no capacity → Return HTTP 429 + log + metric
+```
+
+### Configuration
+
+**config.yaml:**
+```yaml
+rate_limit:
+  enabled: true                # Enable/disable rate limiting
+  requests_per_minute: 60      # Max requests per minute
+```
+
+**Environment variables:**
+```bash
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_REQUESTS_PER_MINUTE=30
+```
+
+### Rate Limiter Lifecycle
+
+**Initialization (`application.go:120-124`):**
+- Only created if `cfg.RateLimit.Enabled = true`
+- Uses `ratelimit.PerMinute(rate)` convenience constructor
+- Passed to webhook handler during setup
+
+**Request Handling (`webhook.go:75-80`):**
+```go
+if rateLimiter != nil && !rateLimiter.Allow() {
+    log.Warn("Rate limit exceeded")
+    metrics.IncrementWebhookReceived("rate_limited")
+    http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+    return
+}
+```
+
+### Key Features
+
+**Non-blocking Check**
+- `Allow()` returns immediately (true/false)
+- No waiting - requests are either accepted or rejected instantly
+
+**Automatic Refill**
+- Capacity is recalculated on every `Allow()` call
+- Based on elapsed time since last refill
+- Smooth distribution over time (not burst-then-wait)
+
+**Thread-safe**
+- Uses mutex to protect capacity state
+- Safe for concurrent webhook requests
+
+**Observability**
+- Rate-limited requests logged as warnings
+- Tracked in metrics as "rate_limited" event type
+- Helps identify if rate limit is too restrictive
+
+### Use Cases
+
+**Protect from webhook floods:**
+- Prevents overwhelming the queue
+- Protects downstream services (Git, Claude)
+- Ensures fair resource allocation
+
+**Prevent abuse:**
+- Limits impact of misconfigured webhooks
+- Protects against accidental DoS
+- Maintains service availability
+
+**Compliance:**
+- Enforce organization rate policies
+- Control costs (especially Claude API usage)
+- Manage infrastructure load
+
+### Example Scenarios
+
+**Scenario 1: Normal Load (within limit)**
+```
+Time: 0s → Request arrives → Capacity: 60 → Allow ✓
+Time: 1s → Request arrives → Capacity: 60 → Allow ✓
+Time: 2s → Request arrives → Capacity: 60 → Allow ✓
+```
+
+**Scenario 2: Burst Traffic (exceeding limit)**
+```
+requests_per_minute: 60 (1 per second average)
+
+Time: 0.0s → 30 requests in 1 second → Capacity: 30 → All allowed ✓
+Time: 0.5s → 20 more requests → Capacity: 10 → All allowed ✓
+Time: 1.0s → 15 more requests → Capacity: 1 (refilled) → 1 allowed ✓, 14 rejected ✗
+Time: 2.0s → 5 requests → Capacity: 2 (refilled) → 2 allowed ✓, 3 rejected ✗
+```
+
+The bucket allows short bursts but enforces the long-term rate.
+
+### Why This Design?
+
+1. **Simple** - Easy to understand and configure
+2. **Efficient** - O(1) time complexity, minimal memory
+3. **Fair** - Allows bursts while enforcing average rate
+4. **Flexible** - Can be disabled or reconfigured per environment
+5. **Observable** - Clear metrics and logging for monitoring
+
+### Alternative: Per-Project Rate Limiting
+
+Currently, rate limiting is **global** (all webhooks share one bucket). Future enhancement could add **per-project rate limiting**:
+
+```go
+// Future enhancement idea
+rateLimiters map[string]*RateLimiter  // projectKey → limiter
+```
+
+This would allow different projects to have different rate limits.
+
+## Startup Validation System
+
+**Location:** `internal/app/validator/validator.go`
+
+The application performs comprehensive startup validation **before** accepting any webhooks. This ensures all dependencies are available and properly configured.
+
+### Validation Checks
+
+The validator runs automatically when the application starts (`main.go:37-42`):
+
+```go
+validationResult := validator.ValidateStartup(cfg, logger)
+validationResult.LogResults(logger)
+
+if !validationResult.IsValid() {
+    logger.Fatal("Startup validation failed - exiting")
+}
+```
+
+### What Gets Validated
+
+**1. Configuration (`validator.go:95-135`)**
+- Bitbucket username and token are set
+- Event type is valid (`pr_opened` or `comment_added`)
+- Server port is in valid range (1-65535)
+- Claude timeout is positive
+
+**2. Claude CLI (`validator.go:138-171`)**
+- `claude` command is available in PATH
+- Claude CLI version check (`claude --version`)
+- Authentication validation with 15-second timeout
+  - Executes test prompt: `claude -p "hello" --model haiku`
+  - Detects invalid credentials (timeout or error messages)
+- Bitbucket MCP is configured (`claude mcp list`)
+  - Checks for `@atlassian-dc-mcp/bitbucket` package
+  - Provides installation instructions if missing
+
+**3. Git (`validator.go:174-201`)**
+- `git` command is available in PATH
+- Git version check (`git --version`)
+
+**4. Profiles (`validator.go:204-251`)**
+- Profiles directory exists
+- Default profile file exists (`profiles/default.md`)
+- Default profile is not empty
+- Warns about missing project-specific profiles (non-fatal)
+
+**5. Directory Permissions (`validator.go:275-301`)**
+- Git base directory (`./projects`) is writable
+- Logs directory (`./logs`) is writable (if file logging enabled)
+
+### Error Reporting
+
+Validation errors are accumulated and reported together:
+
+```
+Startup Dependencies Check Failed
+
+1. Claude CLI: Claude CLI is not installed or not in PATH
+  Solution: Install Claude CLI from https://docs.anthropic.com/en/docs/claude-code
+
+2. Profiles: Default profile file does not exist: profiles/default.md
+  Solution: Create default profile: touch profiles/default.md
+
+Please fix the above issues and restart the application.
+```
+
+### Success Output
+
+When all checks pass:
+
+```
+✓ Claude CLI: 2.0.46 (Claude Code)
+✓ Claude CLI is authenticated
+✓ Bitbucket MCP server is configured
+✓ git version 2.39.5 (Apple Git-154)
+✓ Profiles: Found default profile at profiles/default.md
+✓ Git base directory: ./projects (writable)
+✓ Logs directory: ./logs (writable)
+All startup dependency checks passed
+
+Application started successfully - ready to process webhooks
+```
+
+### Why This Design?
+
+**Fail Fast**
+- Detect configuration issues immediately at startup
+- Don't accept webhooks if dependencies are broken
+- Clear error messages guide users to fix problems
+
+**Security**
+- Validates Claude authentication before processing any PRs
+- Ensures Bitbucket MCP is properly configured
+- Checks file permissions to prevent runtime failures
+
+**User Experience**
+- Single check provides complete dependency status
+- Actionable error messages with exact commands to fix issues
+- Success indicators confirm everything is ready
+
+### Authentication Validation Details
+
+The Claude authentication check uses a timeout-based approach:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+cmd := exec.CommandContext(ctx, "claude", "-p", "hello", "--model", "haiku")
+
+// If timeout occurs → invalid credentials (command hangs)
+// If error messages → not authenticated
+// If success → properly authenticated
+```
+
+Invalid credentials cause the Claude CLI to hang, so a 15-second timeout detects this condition and reports a clear error.
+
+## Key Design Principles
+
+### Separation of Concerns
+- **Domain logic** (ReviewService) is isolated from infrastructure (Application)
+- ReviewService has no idea about HTTP, queues, or how components are created
+- Application has no idea about review logic, just wires things together
+
+### Dependency Injection
+- Application creates all concrete implementations
+- ReviewService receives only interfaces (ports)
+- Makes testing easy - mock the ports, test the logic
+
+### Single Responsibility
+- Application: Lifecycle management and composition
+- ReviewService: Review orchestration logic
+- Each adapter: One specific infrastructure concern
+
+This design makes the codebase maintainable, testable, and follows hexagonal architecture principles.

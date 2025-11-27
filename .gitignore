@@ -5,6 +5,11 @@
 *.so
 *.dylib
 build
+bin
+bb-pr-reviewer
+pr-reviewer
+.claude
+*.Dockerfile
 
 # Test binary, built with `go test -c`
 *.test
@@ -43,6 +48,9 @@ logs/
 
 # Metrics storage
 metrics-storage/
+
+# Projects
+projects
 
 # Claude configuration
 claude-config/

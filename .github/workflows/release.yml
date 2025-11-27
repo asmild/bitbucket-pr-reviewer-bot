@@ -35,4 +35,4 @@ jobs:
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v1
         with:
-          files: ./build/bb-pr-reviewer-${{ matrix.goos == 'windows' && format('{0}.exe', matrix.goos) || format('{0}-{1}', matrix.goos, matrix.goarch) }}
+          files: ./bin/bb-pr-reviewer-${{ matrix.goos == 'windows' && format('{0}.exe', matrix.goos) || format('{0}-{1}', matrix.goos, matrix.goarch) }}

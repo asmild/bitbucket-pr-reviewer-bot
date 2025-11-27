@@ -2,6 +2,8 @@
 
 This guide walks you through deploying the PR Reviewer bot to production.
 
+> **Note:** This application uses a modern **Hexagonal Architecture** with clean separation of concerns, dependency injection, and production-grade resilience patterns including circuit breakers, retry logic, and comprehensive startup validation.
+
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
@@ -78,7 +80,7 @@ For each repository or project:
 2. Click **Create webhook**
 3. Configure webhook:
    - **Name**: `PR Review Bot`
-   - **URL**: `https://your-server.com/webhook/bitbucket/pr`
+   - **URL**: `https://your-server.com/webhook/bitbucket`
    - **Status**: Active
    - **SSL/TLS**: Verify (if using HTTPS)
    - **Secret**: Generate strong secret (save for configuration)
@@ -146,8 +148,8 @@ bitbucket:
   event_type: "comment_added"
   trigger_keyword: "/review"
 
-templates:
-  directory: ./templates
+profiles:
+  directory: ./profiles
   default: default
 
 circuit_breaker:
@@ -167,26 +169,27 @@ logging:
   enable_file: true
 ```
 
-### 5. Prepare Templates
+### 5. Prepare Profiles
 
-Ensure templates directory exists:
+Ensure profiles directory exists:
 
 ```bash
-mkdir -p templates/default
+mkdir -p profiles
 ```
 
-Create default template if not exists:
+Create default profile if not exists:
 
 ```bash
-cat > templates/default/prompt.md << 'EOF'
-# Role:
+cat > profiles/default.md << 'EOF'
+**Role:**
 You are an experienced software engineer conducting a code review.
 
-# Goal:
+**Goal:**
 Review the pull request thoroughly and provide constructive feedback.
 
-# PR:
-- **URL**: {{prUrl}}
+**PR:**
+`{{prUrl}}`
+
 - **Title**: {{title}}
 - **Author**: {{author}}
 
@@ -203,6 +206,36 @@ export BITBUCKET_USER="pr-review-bot"
 export BITBUCKET_TOKEN="your-app-password"
 export BITBUCKET_WEBHOOK_SECRET="your-webhook-secret"
 ```
+
+### 7. Verify Startup Dependencies
+
+The application performs comprehensive startup validation before running. You can test this:
+
+```bash
+./pr-reviewer
+```
+
+The application will check:
+- ✓ Configuration values (Bitbucket credentials, ports, timeouts)
+- ✓ Claude CLI installation and authentication
+- ✓ Git installation
+- ✓ Profiles directory and default profile existence
+- ✓ Directory write permissions (git base dir, logs)
+
+**Example successful output:**
+```
+✓ Claude CLI: claude-cli v1.2.3
+✓ Claude CLI authentication verified
+✓ git version 2.39.0
+✓ Profiles: Found default profile at ./profiles/default.md
+✓ Git base directory: ./projects (writable)
+✓ Logs directory: ./logs (writable)
+All startup dependency checks passed
+
+Application started successfully - ready to process webhooks
+```
+
+**If validation fails**, the application will exit with clear error messages showing exactly what needs to be fixed.
 
 ## Deployment Options
 
@@ -273,7 +306,7 @@ RUN curl -sSL https://claude.ai/cli/install.sh | sh
 WORKDIR /app
 
 COPY --from=builder /app/pr-reviewer .
-COPY --from=builder /app/templates ./templates
+COPY --from=builder /app/profiles ./profiles
 COPY --from=builder /app/config.example.yaml ./config.yaml
 
 EXPOSE 8080
@@ -293,7 +326,7 @@ docker run -d \
   -e BITBUCKET_TOKEN=your-token \
   -e BITBUCKET_WEBHOOK_SECRET=your-secret \
   -v $(pwd)/config.yaml:/app/config.yaml \
-  -v $(pwd)/templates:/app/templates \
+  -v $(pwd)/profiles:/app/profiles \
   -v $(pwd)/logs:/app/logs \
   pr-reviewer:latest
 ```
@@ -319,7 +352,7 @@ services:
       - LOG_LEVEL=info
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      - ./templates:/app/templates:ro
+      - ./profiles:/app/profiles:ro
       - ./logs:/app/logs
       - ./metrics-storage:/app/metrics-storage
     healthcheck:
@@ -369,8 +402,8 @@ data:
       user: pr-review-bot
       event_type: comment_added
       trigger_keyword: /review
-    templates:
-      directory: ./templates
+    profiles:
+      directory: ./profiles
       default: default
 ---
 apiVersion: apps/v1
@@ -552,13 +585,23 @@ scrape_configs:
 
 ### Available Metrics
 
-- `pr_reviews_created_total` - Total PRs triggered for review
-- `pr_reviews_updated_total` - Total PR updates
-- `pr_reviews_success_total` - Successful reviews
-- `pr_reviews_failed_total` - Failed reviews by error type
-- `pr_review_duration_seconds` - Review duration histogram
-- `pr_lgtm_total` - Total LGTMs issued
-- `pr_issues_found_total` - Total issues found
+- `pr_reviewer_webhook_received_total` - Total webhooks received by event type
+- `pr_reviewer_review_started_total` - Reviews started by project
+- `pr_reviewer_review_completed_total` - Completed reviews by project and status
+- `pr_reviewer_review_failed_total` - Failed reviews by project and error type
+- `pr_reviewer_review_duration_seconds` - Review duration histogram
+- `pr_reviewer_queue_size` - Current queue size
+- `pr_reviewer_git_clone_duration_seconds` - Git operation duration
+- `pr_reviewer_circuit_breaker_state` - Circuit breaker status
+
+**For comprehensive metrics documentation including:**
+- Detailed metric descriptions
+- Histogram bucket interpretation
+- PromQL query examples
+- Grafana dashboard setup
+- Alerting rules
+
+See [Metrics Guide](metrics.md).
 
 ### Log Monitoring
 
@@ -590,10 +633,10 @@ If using filesystem persistence:
 tar -czf metrics-backup-$(date +%Y%m%d).tar.gz metrics-storage/
 ```
 
-### Templates Backup
+### Profiles Backup
 
 ```bash
-tar -czf templates-backup-$(date +%Y%m%d).tar.gz templates/
+tar -czf profiles-backup-$(date +%Y%m%d).tar.gz profiles/
 ```
 
 ## Security Best Practices
@@ -632,7 +675,7 @@ Check logs for:
 - Configuration validation errors
 - Missing required fields (user, token)
 - Port already in use
-- Templates directory not found
+- Profiles directory not found
 
 ### Webhooks Not Received
 
@@ -681,7 +724,7 @@ Solutions:
 **Monthly:**
 - Rotate Bitbucket tokens
 - Update dependencies
-- Review and optimize templates
+- Review and optimize profiles
 - Backup configuration and metrics
 
 ### Updates
@@ -699,7 +742,8 @@ To update the application:
 ## Support and Resources
 
 - **Configuration Guide**: [configuration.md](configuration.md)
-- **Templates Guide**: [templates.md](templates.md)
+- **Profiles Guide**: [profiles.md](profiles.md)
+- **Metrics Guide**: [metrics.md](metrics.md)
 - **GitHub Issues**: Report bugs and request features
 - **Logs**: Check application logs for detailed errors
 
@@ -708,6 +752,6 @@ To update the application:
 After deployment:
 1. Test with sample PRs
 2. Gather feedback from team
-3. Refine templates based on results
+3. Refine profiles based on results
 4. Set up monitoring and alerts
 5. Document team-specific workflows

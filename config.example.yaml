@@ -6,20 +6,26 @@
 # - server.port -> PORT
 # - claude.model -> CLAUDE_MODEL
 # - claude.timeout_minutes -> CLAUDE_TIMEOUT_CONFIG
+# - bitbucket.self_hosted -> BITBUCKET_SELF_HOSTED
+# - bitbucket.base_url -> BITBUCKET_BASE_URL  # Required if self_hosted is true
 # - bitbucket.user -> BITBUCKET_USER
 # - bitbucket.token -> BITBUCKET_TOKEN
 # - bitbucket.webhook_secret -> BITBUCKET_WEBHOOK_SECRET
 # - bitbucket.allowed_project_keys -> BITBUCKET_ALLOWED_PROJECT_KEYS (comma-separated)
 # - bitbucket.event_type -> BITBUCKET_EVENT_TYPE
 # - bitbucket.trigger_keyword -> TRIGGER_KEYWORD
-# - templates.directory -> TEMPLATES_DIRECTORY
-# - templates.default -> TEMPLATES_DEFAULT
+# - profiles.directory -> PROFILES_DIRECTORY
+# - profiles.default -> PROFILES_DEFAULT
+# - queue.max_size -> QUEUE_MAX_SIZE
+# - queue.max_retries -> QUEUE_MAX_RETRIES
 # - circuit_breaker.failure_threshold -> CB_FAILURE_THRESHOLD
 # - circuit_breaker.reset_timeout_ms -> CB_RESET_TIMEOUT_MS
 # - metrics.persistence.enabled -> METRICS_PERSISTENCE_ENABLED
 # - metrics.persistence.type -> METRICS_PERSISTENCE_TYPE
 # - metrics.persistence.path -> METRICS_PERSISTENCE_PATH
 # - metrics.persistence.save_interval_ms -> METRICS_PERSISTENCE_SAVE_INTERVAL_MS
+# - rate_limit.enabled -> RATE_LIMIT_ENABLED
+# - rate_limit.requests_per_minute -> RATE_LIMIT_REQUESTS_PER_MINUTE
 # - logging.level -> LOG_LEVEL
 # - logging.file_retention_days -> LOG_FILE_RETENTION_DAYS
 # - logging.max_file_size -> LOG_MAX_FILE_SIZE
@@ -34,13 +40,19 @@ server:
 # Claude AI configuration
 claude:
   # Model to use (default: sonnet)
-  # Available: "opus", "sonnet", "haiku"
   model: sonnet
+  # model: "opus"     # Use latest Opus (more capable)
+  # model: "haiku"    # Use latest Haiku (faster/cheaper)
+  # model: "claude-sonnet-4-5-20250929"  # Pin specific version
   # Timeout for Claude CLI execution in minutes (default: 10)
   timeout_minutes: 10
 
 # Bitbucket Data Center configuration
 bitbucket:
+  # Set to true if using Bitbucket Data Center / Server (default: true)
+  self-hosted: true
+  # Base URL of Bitbucket instance (required for self-hosted)
+  base_url: "http://bitbucket.example.com"
   # Bitbucket username (required)
   user: ""
   # Bitbucket app password or personal access token (required)
@@ -63,32 +75,44 @@ bitbucket:
   # Only used when event_type is "comment_added"
   trigger_keyword: "/review"
 
-# Templates configuration
-templates:
-  # Base directory where template folders are located (default: ./templates)
-  directory: ./templates
-  # Default template folder name (default: default)
+# Profiles configuration
+# Note: Profiles are markdown files containing AI review instructions
+# Each profile is a .md file in the profiles directory (e.g., default.md, custom.md)
+profiles:
+  # Base directory where profile .md files are located (default: ./profiles)
+  directory: ./profiles
+  # Default profile name without .md extension (default: default)
+  # Corresponds to ./profiles/default.md
   default: default
-  # Per-project template configurations (optional)
+  # Per-project profile configurations (optional)
   # Each project can have:
-  # 1. template: applies to all repositories in the project
+  # 1. profile: applies to all repositories in the project
   # 2. repositories: per-repository overrides for specific repos
   projects:
     CI:
-      # Template applied to all repos in CI project
-      template: custom
+      # Profile applied to all repos in CI project
+      profile: custom
       repositories:
         # Override for specific repository in CI project
         critical-repo: critical-review
         important-repo: important-review
     INFRA:
-      template: infrastructure-review
+      profile: infrastructure-review
       repositories:
         network-config: security-review
     DEV:
       # Can have just per-repo overrides without project-level template
       repositories:
         experimental: lenient-review
+
+# Queue configuration
+queue:
+  # Maximum number of PRs in queue (default: 100)
+  # When full, new PRs will be rejected with 503 error
+  # Manual triggers (@bot review) will get emoji reaction
+  max_size: 100
+  # Maximum retry attempts for failed reviews (default: 3)
+  max_retries: 3
 
 # Circuit breaker configuration
 # Implements fault tolerance pattern
@@ -109,6 +133,14 @@ metrics:
     path: ./metrics-storage
     # Interval to save metrics in milliseconds (default: 30000)
     save_interval_ms: 30000
+
+# Rate limiting configuration
+rate_limit:
+  # Enable rate limiting for webhook processing (default: false)
+  enabled: false
+  # Maximum number of webhook requests per minute (default: 60)
+  # When limit is exceeded, webhooks are rejected with 429 Too Many Requests
+  requests_per_minute: 60
 
 # Logging configuration
 logging:

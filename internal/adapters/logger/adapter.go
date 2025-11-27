@@ -1,0 +1,149 @@
+package logger
+
+import (
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
+
+// Logger adapts slog.Logger to implement ports.Logger interface
+type Logger struct {
+	logger *slog.Logger
+}
+
+// rotatingFileWriter implements io.Writer with daily log rotation
+type rotatingFileWriter struct {
+	mu          sync.Mutex
+	file        *os.File
+	currentDate string
+	logDir      string
+}
+
+// Write implements io.Writer with automatic daily rotation
+func (w *rotatingFileWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	today := time.Now().Format("2006-01-02")
+
+	// Rotate if day changed
+	if today != w.currentDate {
+		// Close old file
+		if w.file != nil {
+			w.file.Close()
+		}
+
+		// Open new file for today
+		w.currentDate = today
+		logPath := filepath.Join(w.logDir, fmt.Sprintf("app-%s.log", today))
+		w.file, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return 0, fmt.Errorf("failed to open log file: %w", err)
+		}
+	}
+
+	return w.file.Write(p)
+}
+
+// Config holds logger configuration
+type Config struct {
+	Level             string
+	EnableConsole     bool
+	EnableFile        bool
+	MaxFileSize       string
+	FileRetentionDays int
+}
+
+// New creates a new Logger with the given configuration
+func New(cfg Config) (*Logger, error) {
+	// Parse log level
+	level := slog.LevelInfo
+	switch cfg.Level {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+
+	var writers []io.Writer
+
+	// Console output
+	if cfg.EnableConsole {
+		writers = append(writers, os.Stdout)
+	}
+
+	// File output (automatic daily rotation)
+	if cfg.EnableFile {
+		if err := os.MkdirAll("./logs", 0755); err != nil {
+			return nil, fmt.Errorf("failed to create logs directory: %w", err)
+		}
+
+		// Create rotating writer that automatically switches to new file each day
+		rotatingWriter := &rotatingFileWriter{
+			logDir:      "./logs",
+			currentDate: time.Now().Format("2006-01-02"),
+		}
+
+		// Open initial log file
+		logPath := filepath.Join("./logs", fmt.Sprintf("app-%s.log", rotatingWriter.currentDate))
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open log file: %w", err)
+		}
+		rotatingWriter.file = logFile
+
+		writers = append(writers, rotatingWriter)
+	}
+
+	// Default to stdout if no writers configured
+	if len(writers) == 0 {
+		writers = append(writers, os.Stdout)
+	}
+
+	output := io.MultiWriter(writers...)
+
+	// Create slog handler with text output for readability
+	handler := slog.NewTextHandler(output, &slog.HandlerOptions{
+		Level: level,
+	})
+
+	logger := slog.New(handler)
+
+	return &Logger{
+		logger: logger,
+	}, nil
+}
+
+// Debug logs a debug message with optional key-value pairs
+func (l *Logger) Debug(msg string, args ...any) {
+	l.logger.Debug(msg, args...)
+}
+
+// Info logs an info message with optional key-value pairs
+func (l *Logger) Info(msg string, args ...any) {
+	l.logger.Info(msg, args...)
+}
+
+// Warn logs a warning message with optional key-value pairs
+func (l *Logger) Warn(msg string, args ...any) {
+	l.logger.Warn(msg, args...)
+}
+
+// Error logs an error message with optional key-value pairs
+func (l *Logger) Error(msg string, args ...any) {
+	l.logger.Error(msg, args...)
+}
+
+// Fatal logs a fatal message and exits
+func (l *Logger) Fatal(msg string, args ...any) {
+	l.logger.Error(msg, args...)
+	os.Exit(1)
+}

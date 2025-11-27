@@ -1,0 +1,279 @@
+{
+  "eventKey": "pr:comment:added",
+  "date": "2025-11-24T13:34:56+0000",
+  "actor": {
+    "name": "jdoe",
+    "emailAddress": "john.doe@example.com",
+    "active": true,
+    "displayName": "John Doe",
+    "id": 1001,
+    "slug": "jdoe",
+    "type": "NORMAL",
+    "links": {
+      "self": [
+        {
+          "href": "https://bitbucket.example.com/users/jdoe"
+        }
+      ]
+    }
+  },
+  "pullRequest": {
+    "id": 123,
+    "version": 0,
+    "title": "Add new feature for user authentication",
+    "description": "* Implement OAuth2 flow\n* Add JWT token validation\n* Update user model\n* Add unit tests\n* Update API documentation",
+    "state": "OPEN",
+    "open": true,
+    "closed": false,
+    "draft": false,
+    "createdDate": 1732376096000,
+    "updatedDate": 1732376096000,
+    "fromRef": {
+      "id": "refs/heads/feature/auth-oauth2",
+      "displayId": "feature/auth-oauth2",
+      "latestCommit": "abc123def456789fedcba0987654321fedcba098",
+      "type": "BRANCH",
+      "repository": {
+        "slug": "example-api",
+        "id": 1001,
+        "name": "example-api",
+        "description": "Example API service",
+        "hierarchyId": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+        "scmId": "git",
+        "state": "AVAILABLE",
+        "statusMessage": "Available",
+        "forkable": true,
+        "project": {
+          "key": "PROJ",
+          "id": 100,
+          "name": "Project",
+          "public": false,
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/projects/PROJ"
+              }
+            ]
+          }
+        },
+        "public": false,
+        "archived": false,
+        "links": {
+          "clone": [
+            {
+              "href": "https://bitbucket.example.com/scm/proj/example-api.git",
+              "name": "http"
+            },
+            {
+              "href": "ssh://git@bitbucket.example.com:7999/proj/example-api.git",
+              "name": "ssh"
+            }
+          ],
+          "self": [
+            {
+              "href": "https://bitbucket.example.com/projects/PROJ/repos/example-api/browse"
+            }
+          ]
+        }
+      }
+    },
+    "toRef": {
+      "id": "refs/heads/main",
+      "displayId": "main",
+      "latestCommit": "fedcba0987654321fedcba098765432100112233",
+      "type": "BRANCH",
+      "repository": {
+        "slug": "example-api",
+        "id": 1001,
+        "name": "example-api",
+        "description": "Example API service",
+        "hierarchyId": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+        "scmId": "git",
+        "state": "AVAILABLE",
+        "statusMessage": "Available",
+        "forkable": true,
+        "project": {
+          "key": "PROJ",
+          "id": 100,
+          "name": "Project",
+          "public": false,
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/projects/PROJ"
+              }
+            ]
+          }
+        },
+        "public": false,
+        "archived": false,
+        "links": {
+          "clone": [
+            {
+              "href": "https://bitbucket.example.com/scm/proj/example-api.git",
+              "name": "http"
+            },
+            {
+              "href": "ssh://git@bitbucket.example.com:7999/proj/example-api.git",
+              "name": "ssh"
+            }
+          ],
+          "self": [
+            {
+              "href": "https://bitbucket.example.com/projects/PROJ/repos/example-api/browse"
+            }
+          ]
+        }
+      }
+    },
+    "locked": false,
+    "author": {
+      "user": {
+        "name": "jsmith",
+        "emailAddress": "jane.smith@example.com",
+        "active": true,
+        "displayName": "Jane Smith",
+        "id": 1002,
+        "slug": "jsmith",
+        "type": "NORMAL",
+        "links": {
+          "self": [
+            {
+              "href": "https://bitbucket.example.com/users/jsmith"
+            }
+          ]
+        }
+      },
+      "role": "AUTHOR",
+      "approved": false,
+      "status": "UNAPPROVED"
+    },
+    "reviewers": [
+      {
+        "user": {
+          "name": "mlee",
+          "emailAddress": "michael.lee@example.com",
+          "active": true,
+          "displayName": "Michael Lee",
+          "id": 1003,
+          "slug": "mlee",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/users/mlee"
+              }
+            ]
+          }
+        },
+        "role": "REVIEWER",
+        "approved": false,
+        "status": "UNAPPROVED"
+      },
+      {
+        "user": {
+          "name": "schen",
+          "emailAddress": "sarah.chen@example.com",
+          "active": true,
+          "displayName": "Sarah Chen",
+          "id": 1004,
+          "slug": "schen",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/users/schen"
+              }
+            ]
+          }
+        },
+        "role": "REVIEWER",
+        "approved": false,
+        "status": "UNAPPROVED"
+      }
+    ],
+    "participants": [
+      {
+        "user": {
+          "name": "bitbucket.system-user",
+          "active": true,
+          "displayName": "Bitbucket",
+          "emailAddress": null,
+          "id": 9999,
+          "slug": "bitbucket.system-user",
+          "type": "SERVICE",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/bots/bitbucket.system-user"
+              }
+            ]
+          }
+        },
+        "role": "PARTICIPANT",
+        "approved": false,
+        "status": "UNAPPROVED"
+      },
+      {
+        "user": {
+          "name": "codereviewer-bot",
+          "emailAddress": "",
+          "active": true,
+          "displayName": "Code Reviewer Bot",
+          "id": 5000,
+          "slug": "codereviewer-bot",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/users/codereviewer-bot"
+              }
+            ]
+          }
+        },
+        "role": "PARTICIPANT",
+        "approved": false,
+        "status": "UNAPPROVED"
+      }
+    ],
+    "links": {
+      "self": [
+        {
+          "href": "https://bitbucket.example.com/projects/PROJ/repos/example-api/pull-requests/123"
+        }
+      ]
+    }
+  },
+  "comment": {
+    "properties": {
+      "repositoryId": 1001
+    },
+    "id": 5001,
+    "version": 0,
+    "text": "@bot-reviewer /review",
+    "author": {
+      "name": "jdoe",
+      "emailAddress": "john.doe@example.com",
+      "active": true,
+      "displayName": "John Doe",
+      "id": 1001,
+      "slug": "jdoe",
+      "type": "NORMAL",
+      "links": {
+        "self": [
+          {
+            "href": "https://bitbucket.example.com/users/jdoe"
+          }
+        ]
+      }
+    },
+    "createdDate": 1732379696000,
+    "updatedDate": 1732379696000,
+    "comments": [],
+    "threadResolved": false,
+    "severity": "NORMAL",
+    "state": "OPEN"
+  }
+}

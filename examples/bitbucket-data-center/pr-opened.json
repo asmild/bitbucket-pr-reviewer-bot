@@ -1,0 +1,227 @@
+{
+  "eventKey": "pr:opened",
+  "date": "2025-11-21T09:45:44+0000",
+  "actor": {
+    "name": "rjohnson",
+    "emailAddress": "robert.johnson@example.com",
+    "active": true,
+    "displayName": "Robert Johnson",
+    "id": 2001,
+    "slug": "rjohnson",
+    "type": "NORMAL",
+    "links": {
+      "self": [
+        {
+          "href": "https://bitbucket.example.com/users/rjohnson"
+        }
+      ]
+    }
+  },
+  "pullRequest": {
+    "id": 456,
+    "version": 0,
+    "title": "Refactor database connection pooling",
+    "description": "* Implement connection pool manager\n* Add configurable pool size\n* Improve error handling for connection failures\n* Add monitoring metrics\n* Update documentation",
+    "state": "OPEN",
+    "open": true,
+    "closed": false,
+    "draft": false,
+    "createdDate": 1732183544000,
+    "updatedDate": 1732183544000,
+    "fromRef": {
+      "id": "refs/heads/feature/db-connection-pool",
+      "displayId": "feature/db-connection-pool",
+      "latestCommit": "def789abc123456789fedcba0123456789abcdef",
+      "type": "BRANCH",
+      "repository": {
+        "slug": "backend-service",
+        "id": 2001,
+        "name": "backend-service",
+        "description": "Backend microservice handling business logic",
+        "hierarchyId": "z9y8x7w6v5u4t3s2r1q0p9o8n7m6l5k4",
+        "scmId": "git",
+        "state": "AVAILABLE",
+        "statusMessage": "Available",
+        "forkable": true,
+        "project": {
+          "key": "TEAM",
+          "id": 200,
+          "name": "Team Project",
+          "public": false,
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/projects/TEAM"
+              }
+            ]
+          }
+        },
+        "public": false,
+        "archived": false,
+        "links": {
+          "clone": [
+            {
+              "href": "https://bitbucket.example.com/scm/team/backend-service.git",
+              "name": "http"
+            },
+            {
+              "href": "ssh://git@bitbucket.example.com:7999/team/backend-service.git",
+              "name": "ssh"
+            }
+          ],
+          "self": [
+            {
+              "href": "https://bitbucket.example.com/projects/TEAM/repos/backend-service/browse"
+            }
+          ]
+        }
+      }
+    },
+    "toRef": {
+      "id": "refs/heads/main",
+      "displayId": "main",
+      "latestCommit": "0123456789abcdef0123456789abcdef01234567",
+      "type": "BRANCH",
+      "repository": {
+        "slug": "backend-service",
+        "id": 2001,
+        "name": "backend-service",
+        "description": "Backend microservice handling business logic",
+        "hierarchyId": "z9y8x7w6v5u4t3s2r1q0p9o8n7m6l5k4",
+        "scmId": "git",
+        "state": "AVAILABLE",
+        "statusMessage": "Available",
+        "forkable": true,
+        "project": {
+          "key": "TEAM",
+          "id": 200,
+          "name": "Team Project",
+          "public": false,
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/projects/TEAM"
+              }
+            ]
+          }
+        },
+        "public": false,
+        "archived": false,
+        "links": {
+          "clone": [
+            {
+              "href": "https://bitbucket.example.com/scm/team/backend-service.git",
+              "name": "http"
+            },
+            {
+              "href": "ssh://git@bitbucket.example.com:7999/team/backend-service.git",
+              "name": "ssh"
+            }
+          ],
+          "self": [
+            {
+              "href": "https://bitbucket.example.com/projects/TEAM/repos/backend-service/browse"
+            }
+          ]
+        }
+      }
+    },
+    "locked": false,
+    "author": {
+      "user": {
+        "name": "awilliams",
+        "emailAddress": "alice.williams@example.com",
+        "active": true,
+        "displayName": "Alice Williams",
+        "id": 2002,
+        "slug": "awilliams",
+        "type": "NORMAL",
+        "links": {
+          "self": [
+            {
+              "href": "https://bitbucket.example.com/users/awilliams"
+            }
+          ]
+        }
+      },
+      "role": "AUTHOR",
+      "approved": false,
+      "status": "UNAPPROVED"
+    },
+    "reviewers": [
+      {
+        "user": {
+          "name": "dbrown",
+          "emailAddress": "david.brown@example.com",
+          "active": true,
+          "displayName": "David Brown",
+          "id": 2003,
+          "slug": "dbrown",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/users/dbrown"
+              }
+            ]
+          }
+        },
+        "role": "REVIEWER",
+        "approved": false,
+        "status": "UNAPPROVED"
+      },
+      {
+        "user": {
+          "name": "emartinez",
+          "emailAddress": "elena.martinez@example.com",
+          "active": true,
+          "displayName": "Elena Martinez",
+          "id": 2004,
+          "slug": "emartinez",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/users/emartinez"
+              }
+            ]
+          }
+        },
+        "role": "REVIEWER",
+        "approved": false,
+        "status": "UNAPPROVED"
+      },
+      {
+        "user": {
+          "name": "twhite",
+          "emailAddress": "thomas.white@example.com",
+          "active": true,
+          "displayName": "Thomas White",
+          "id": 2005,
+          "slug": "twhite",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.com/users/twhite"
+              }
+            ]
+          }
+        },
+        "role": "REVIEWER",
+        "approved": false,
+        "status": "UNAPPROVED"
+      }
+    ],
+    "participants": [],
+    "links": {
+      "self": [
+        {
+          "href": "https://bitbucket.example.com/projects/TEAM/repos/backend-service/pull-requests/456"
+        }
+      ]
+    }
+  }
+}

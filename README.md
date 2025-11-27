@@ -106,7 +106,7 @@ docker run -d \
 
 1. Navigate to Repository/Project Settings → Webhooks
 2. Create webhook with:
-   - URL: `https://your-server.com/webhook/bitbucket/pr`
+   - URL: `https://your-server.com/webhook/bitbucket`
    - Secret: Your configured webhook secret
    - Events:
      - `Pull request opened` (for automatic reviews)
@@ -155,38 +155,36 @@ export PORT=8080
 
 For detailed configuration options, see [Configuration Guide](docs/configuration.md).
 
-## Templates
+## Profiles
 
-Templates control how Claude reviews your code. Create custom templates for different projects or repositories.
+Profiles control how Claude reviews your code. Create custom profiles for different projects or repositories.
 
-### Template Structure
+### Profile Structure
 
 ```
-templates/
-├── default/
-│   └── prompt.md
-├── backend-review/
-│   └── prompt.md
-└── security-review/
-    └── prompt.md
+profiles/
+├── default.md
+├── backend-review.md
+├── performance-review.md
+└── security-focused.md
 ```
 
-### Configure Per-Project Templates
+### Configure Per-Project Profiles
 
 ```yaml
-templates:
-  directory: ./templates
+profiles:
+  directory: ./profiles
   default: default
   projects:
     BACKEND:
-      template: backend-review
+      profile: performance-review
       repositories:
-        api-gateway: security-review
+        api-gateway: security-focused
     FRONTEND:
-      template: frontend-review
+      profile: quick-review
 ```
 
-For detailed template documentation, see [Templates Guide](docs/templates.md).
+For detailed profile documentation, see [Profiles Guide](docs/profiles.md).
 
 ## API Endpoints
 
@@ -214,7 +212,7 @@ Returns Prometheus metrics including:
 ### Webhook
 
 ```
-POST /webhook/bitbucket/pr
+POST /webhook/bitbucket
 ```
 
 Receives Bitbucket webhook events for PR reviews.
@@ -225,14 +223,17 @@ The bot exposes Prometheus metrics at `/metrics`:
 
 ```
 # Review metrics
-pr_reviews_success_total{repository="my-repo"} 45
-pr_reviews_failed_total{repository="my-repo",error_type="timeout"} 2
-pr_review_duration_seconds{repository="my-repo",status="success",quantile="0.5"} 12.5
+pr_reviewer_review_completed_total{project="CI",status="lgtm"} 45
+pr_reviewer_review_failed_total{project="CI",error_type="timeout"} 2
+pr_reviewer_review_duration_seconds_sum{project="CI"} 540.5
+pr_reviewer_review_duration_seconds_count{project="CI"} 45
 
-# Issue tracking
-pr_lgtm_total{repository="my-repo"} 30
-pr_issues_found_total{repository="my-repo"} 120
+# Queue and system metrics
+pr_reviewer_queue_size 3
+pr_reviewer_circuit_breaker_state{name="main"} 0
 ```
+
+For detailed metrics documentation including histogram interpretation, see [Metrics Guide](docs/metrics.md).
 
 ## Architecture
 
@@ -249,17 +250,18 @@ pr_issues_found_total{repository="my-repo"} 120
 │   ├── metrics/            # Prometheus metrics
 │   ├── queue/              # PR processing queue
 │   ├── startup/            # Startup dependency validation
-│   └── templates/          # Template management
+│   └── profiles/           # Profile management
 ├── pkg/models/             # Data models
-├── templates/              # Review templates
+├── profiles/               # Review profiles
 └── docs/                   # Documentation
 ```
 
 ## Documentation
 
 - [Configuration Guide](docs/configuration.md) - Detailed configuration options
-- [Templates Guide](docs/templates.md) - Creating and managing review templates
+- [Profiles Guide](docs/profiles.md) - Creating and managing review profiles
 - [Deployment Guide](docs/deployment.md) - Production deployment instructions
+- [Metrics Guide](docs/metrics.md) - Monitoring and metrics documentation
 
 ## Development
 
@@ -302,12 +304,16 @@ See [Deployment Guide](docs/deployment.md) for detailed instructions.
 
 ### Available Metrics
 
-- `pr_reviews_created_total` - Total review requests
-- `pr_reviews_success_total` - Successful reviews
-- `pr_reviews_failed_total` - Failed reviews with error types
-- `pr_review_duration_seconds` - Review duration histogram
-- `pr_lgtm_total` - LGTMs issued
-- `pr_issues_found_total` - Issues identified
+- `pr_reviewer_webhook_received_total` - Total webhooks received by event type
+- `pr_reviewer_review_started_total` - Reviews started by project
+- `pr_reviewer_review_completed_total` - Completed reviews by project and status
+- `pr_reviewer_review_failed_total` - Failed reviews by project and error type
+- `pr_reviewer_review_duration_seconds` - Review duration histogram
+- `pr_reviewer_queue_size` - Current queue size
+- `pr_reviewer_git_clone_duration_seconds` - Git operation duration
+- `pr_reviewer_circuit_breaker_state` - Circuit breaker status
+
+See [Metrics Guide](docs/metrics.md) for detailed documentation, PromQL queries, and Grafana dashboard examples.
 
 ### Logging
 

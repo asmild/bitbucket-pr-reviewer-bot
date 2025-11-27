@@ -96,28 +96,29 @@ bitbucket:
 - `BITBUCKET_EVENT_TYPE` - Event type to process
 - `TRIGGER_KEYWORD` - Trigger keyword for reviews
 
-### Templates Configuration
+### Profiles Configuration
 
-Manages PR review templates and customization per project/repository.
+Manages PR review profiles (which select the template to use) and customization per project/repository.
 
 ```yaml
-templates:
+profiles:
   directory: ./templates  # (default: ./templates)
   # Path to templates directory relative to working directory
+  # Note: The directory is still called "templates" in the filesystem
 
   default: default  # (default: default)
-  # Default template folder name for projects not explicitly configured
+  # Default profile folder name for projects not explicitly configured
 
   projects:  # (optional)
-    # Project-specific template configuration
+    # Project-specific profile configuration
     CI:
-      template: strict-review  # Applied to all repos in CI project
+      profile: strict-review  # Applied to all repos in CI project
       repositories:
         critical-repo: critical-review  # Override for specific repo
         important-repo: important-review
 
     INFRA:
-      template: infrastructure-review
+      profile: infrastructure-review
       repositories:
         network-config: security-review
 
@@ -127,19 +128,23 @@ templates:
         experimental: lenient-review
 ```
 
-**Template Resolution Priority:**
+**Profile Resolution Priority:**
 
 1. **Repository-specific override** - `projects.<PROJECT>.repositories.<REPO>`
-2. **Project-level template** - `projects.<PROJECT>.template`
+2. **Project-level profile** - `projects.<PROJECT>.profile`
 3. **Global default** - `default`
 
-If no project configuration exists for a repository, the global `default` template is used.
+If no project configuration exists for a repository, the global `default` profile is used.
 
 **Environment Variables:**
-- `TEMPLATES_DIRECTORY` - Templates directory path
-- `TEMPLATES_DEFAULT` - Default template name
+- `PROFILES_DIRECTORY` - Profiles directory path (also accepts `TEMPLATES_DIRECTORY` for backward compatibility)
+- `PROFILES_DEFAULT` - Default profile name
 
-**Note:** Template projects/repositories are configured only through YAML, not environment variables.
+**Note:** Profile projects/repositories are configured only through YAML, not environment variables.
+
+**Terminology Clarification:**
+- **Profiles** (in config) - Select which template to use for a specific project/repository
+- **Templates** (in filesystem) - The actual `prompt.md` files stored in `./templates/` directory
 
 ### Circuit Breaker Configuration
 
@@ -254,9 +259,9 @@ export BITBUCKET_ALLOWED_PROJECT_KEYS=CI,INFRA
 # Override event type
 export BITBUCKET_EVENT_TYPE=pr_opened
 
-# Override templates
-export TEMPLATES_DIRECTORY=/custom/templates/path
-export TEMPLATES_DEFAULT=my-template
+# Override profiles
+export PROFILES_DIRECTORY=/custom/templates/path
+export PROFILES_DEFAULT=my-profile
 
 # Override logging
 export LOG_LEVEL=debug
@@ -298,14 +303,14 @@ By default, the application attempts to load `config.yaml` from the current work
 
 ## Common Configuration Scenarios
 
-### Scenario 1: Single Project with Different Templates
+### Scenario 1: Single Project with Different Profiles
 
 ```yaml
-templates:
+profiles:
   default: default
   projects:
     CI:
-      template: strict-review
+      profile: strict-review
       repositories:
         backend: backend-review
         frontend: frontend-review
@@ -314,15 +319,15 @@ templates:
 ### Scenario 2: Multiple Projects with Defaults
 
 ```yaml
-templates:
+profiles:
   default: default
   projects:
     CI:
-      template: standard-review
+      profile: standard-review
     INFRA:
-      template: infrastructure-review
+      profile: infrastructure-review
     DEV:
-      template: lenient-review
+      profile: lenient-review
 ```
 
 ### Scenario 3: Automatic Review on PR Open
@@ -351,9 +356,9 @@ Check the startup logs:
 - Verify `bitbucket.event_type` is valid
 - Check directory paths exist
 
-### Templates Not Found
+### Profiles/Templates Not Found
 
-- Verify `templates.directory` path is correct
+- Verify `profiles.directory` path is correct
 - Ensure template folders contain `prompt.md` file
 - Check file permissions
 
