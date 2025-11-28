@@ -21,10 +21,9 @@ type Queue struct {
 	metrics        ports.MetricsCollector
 
 	// Queue state
-	items      []*queueItem
-	mu         sync.Mutex
-	processing bool
-	running    bool
+	items   []*queueItem
+	mu      sync.Mutex
+	running bool
 
 	// Channels
 	itemCh chan *queueItem
@@ -32,8 +31,11 @@ type Queue struct {
 	wg     sync.WaitGroup
 
 	// Configuration
-	maxRetries int
-	queueSize  int
+	maxRetries   int
+	queueSize    int
+	workerCount  int
+	processingMu sync.Mutex // Protects processedItems set
+	processing   map[int]bool // Track which PR IDs are being processed
 }
 
 // queueItem represents an item in the queue
@@ -46,8 +48,9 @@ type queueItem struct {
 
 // Config holds queue configuration
 type Config struct {
-	MaxRetries int
-	QueueSize  int // Maximum number of items in the queue
+	MaxRetries  int
+	QueueSize   int // Maximum number of items in the queue
+	WorkerCount int // Number of concurrent workers (default: 1)
 }
 
 // NewQueue creates a new review queue
@@ -65,6 +68,9 @@ func NewQueue(
 	if cfg.QueueSize == 0 {
 		cfg.QueueSize = 100
 	}
+	if cfg.WorkerCount == 0 {
+		cfg.WorkerCount = 1
+	}
 
 	return &Queue{
 		reviewService:  reviewService,
@@ -77,6 +83,8 @@ func NewQueue(
 		stopCh:         make(chan struct{}),
 		maxRetries:     cfg.MaxRetries,
 		queueSize:      cfg.QueueSize,
+		workerCount:    cfg.WorkerCount,
+		processing:     make(map[int]bool),
 		running:        false,
 	}
 }
@@ -158,7 +166,7 @@ func (q *Queue) addReactionAsync(ctx context.Context, pr *models.PullRequest, em
 	}
 }
 
-// Start starts the queue worker
+// Start starts the queue workers
 func (q *Queue) Start(ctx context.Context) {
 	q.mu.Lock()
 	if q.running {
@@ -168,13 +176,19 @@ func (q *Queue) Start(ctx context.Context) {
 	q.running = true
 	q.mu.Unlock()
 
-	q.logger.Info("Starting queue worker")
+	q.logger.Info("Starting queue workers",
+		"worker_count", q.workerCount,
+	)
 
-	q.wg.Add(1)
-	go q.worker(ctx)
+	// Start multiple workers
+	for i := 0; i < q.workerCount; i++ {
+		workerID := i + 1
+		q.wg.Add(1)
+		go q.worker(ctx, workerID)
+	}
 }
 
-// Stop immediately stops the queue worker
+// Stop immediately stops the queue workers
 // Items in progress are abandoned - reviews can be re-run safely
 func (q *Queue) Stop(ctx context.Context) error {
 	q.mu.Lock()
@@ -185,7 +199,9 @@ func (q *Queue) Stop(ctx context.Context) error {
 	q.running = false
 	q.mu.Unlock()
 
-	q.logger.Info("Stopping queue worker immediately")
+	q.logger.Info("Stopping queue workers immediately",
+		"worker_count", q.workerCount,
+	)
 
 	// Close stopCh to signal all goroutines to stop
 	close(q.stopCh)
@@ -199,9 +215,11 @@ func (q *Queue) Stop(ctx context.Context) error {
 
 	select {
 	case <-done:
-		q.logger.Info("Queue worker stopped cleanly")
+		q.logger.Info("Queue workers stopped cleanly")
 	case <-time.After(1 * time.Second):
-		q.logger.Warn("Queue worker shutdown timeout (1s) - forcing stop")
+		q.logger.Warn("Queue workers shutdown timeout (1s) - forcing stop",
+			"worker_count", q.workerCount,
+		)
 		// Goroutines will be killed when process exits
 	}
 
@@ -223,30 +241,37 @@ func (q *Queue) IsRunning() bool {
 }
 
 // worker processes items from the queue
-func (q *Queue) worker(ctx context.Context) {
+func (q *Queue) worker(ctx context.Context, workerID int) {
 	defer q.wg.Done()
 
-	q.logger.Info("Queue worker started")
+	q.logger.Info("Queue worker started",
+		"worker_id", workerID,
+	)
 
 	for {
 		select {
 		case item := <-q.itemCh:
-			q.processItem(ctx, item)
+			q.processItem(ctx, item, workerID)
 		case <-q.stopCh:
-			q.logger.Info("Queue worker received stop signal")
+			q.logger.Info("Queue worker received stop signal",
+				"worker_id", workerID,
+			)
 			return
 		case <-ctx.Done():
-			q.logger.Info("Queue worker context cancelled")
+			q.logger.Info("Queue worker context cancelled",
+				"worker_id", workerID,
+			)
 			return
 		}
 	}
 }
 
 // processItem processes a single queue item
-func (q *Queue) processItem(ctx context.Context, item *queueItem) {
-	q.mu.Lock()
-	q.processing = true
-	q.mu.Unlock()
+func (q *Queue) processItem(ctx context.Context, item *queueItem, workerID int) {
+	// Mark PR as being processed
+	q.processingMu.Lock()
+	q.processing[item.pr.ID] = true
+	q.processingMu.Unlock()
 
 	defer func() {
 		// Recover from panic to prevent worker crash
@@ -256,6 +281,7 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem) {
 				"pr_id", item.pr.ID,
 				"project", item.pr.ProjectKey,
 				"repo", item.pr.RepositorySlug,
+				"worker_id", workerID,
 			)
 
 			// Post failure comment about panic
@@ -271,10 +297,13 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem) {
 			}
 		}
 
-		q.mu.Lock()
-		q.processing = false
+		// Mark PR as no longer being processed
+		q.processingMu.Lock()
+		delete(q.processing, item.pr.ID)
+		q.processingMu.Unlock()
 
 		// Remove item from queue
+		q.mu.Lock()
 		if len(q.items) > 0 {
 			q.items = q.items[1:]
 			q.metrics.ObserveQueueSize(len(q.items))
@@ -285,6 +314,7 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem) {
 	item.lastAttempt = time.Now()
 
 	q.logger.Info("Processing PR from queue",
+		"worker_id", workerID,
 		"project", item.pr.ProjectKey,
 		"repo", item.pr.RepositoryID,
 		"pr_id", item.pr.ID,

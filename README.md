@@ -327,20 +327,6 @@ Logs are written to:
 - Console (stdout) - Real-time monitoring
 - Files (`./logs/`) - Persistent storage with rotation
 
-## Security
-
-- **Webhook Signature Validation** - HMAC-SHA256 verification
-- **Project Filtering** - Restrict to specific projects
-- **Credential Management** - Environment variable support
-- **HTTPS Support** - TLS/SSL encryption recommended
-
-## Performance
-
-- **Low Memory Footprint** - ~20-40 MB idle
-- **Fast Startup** - <1 second
-- **Concurrent Processing** - Goroutine-based queue
-- **Circuit Breaker** - Fault tolerance for transient failures
-
 ## Troubleshooting
 
 ### Common Issues

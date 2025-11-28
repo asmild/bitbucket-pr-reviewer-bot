@@ -17,14 +17,14 @@ type GitRepository interface {
 	// GetOrUpdate gets a repository (cloning if necessary, updating if exists)
 	GetOrUpdate(ctx context.Context, pr *models.PullRequest, credentials Credentials) (string, error)
 
-	// GetLocalPath returns the local path for a repository
-	GetLocalPath(projectKey, repoSlug string) string
+	// GetLocalPath returns the local path for a repository PR
+	GetLocalPath(projectKey, repoSlug string, prID int) string
 
-	// Exists checks if a repository exists locally
-	Exists(projectKey, repoSlug string) bool
+	// Exists checks if a repository PR exists locally
+	Exists(projectKey, repoSlug string, prID int) bool
 
-	// Clean removes a local repository
-	Clean(projectKey, repoSlug string) error
+	// Clean removes a local repository PR
+	Clean(projectKey, repoSlug string, prID int) error
 }
 
 // Credentials represents git credentials

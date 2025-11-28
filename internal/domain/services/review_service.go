@@ -62,10 +62,11 @@ func (s *ReviewService) ReviewPullRequest(ctx context.Context, pr *models.PullRe
 
 	// Ensure repository cleanup after review (success or failure)
 	defer func() {
-		if err := s.gitRepo.Clean(pr.ProjectKey, pr.RepositorySlug); err != nil {
+		if err := s.gitRepo.Clean(pr.ProjectKey, pr.RepositorySlug, pr.ID); err != nil {
 			s.logger.Warn("Failed to clean repository after review",
 				"project", pr.ProjectKey,
 				"repo", pr.RepositorySlug,
+				"pr_id", pr.ID,
 				"error", err,
 			)
 		}

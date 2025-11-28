@@ -144,8 +144,9 @@ func New(cfg *config.Config) (*Application, error) {
 	// Initialize queue
 	reviewQueue := queue.NewQueue(
 		queue.Config{
-			MaxRetries: cfg.Queue.MaxRetries,
-			QueueSize:  cfg.Queue.MaxSize,
+			MaxRetries:  cfg.Queue.MaxRetries,
+			QueueSize:   cfg.Queue.MaxSize,
+			WorkerCount: cfg.Queue.WorkerCount,
 		},
 		reviewService,
 		circuitBreaker,

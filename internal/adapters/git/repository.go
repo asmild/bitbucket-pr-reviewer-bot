@@ -38,7 +38,7 @@ func NewRepository(cfg Config, logger ports.Logger) *Repository {
 
 // Clone clones a repository to the local filesystem
 func (r *Repository) Clone(ctx context.Context, pr *models.PullRequest, credentials ports.Credentials) (string, error) {
-	localPath := r.GetLocalPath(pr.ProjectKey, pr.RepositorySlug)
+	localPath := r.GetLocalPath(pr.ProjectKey, pr.RepositorySlug, pr.ID)
 
 	// Ensure parent directory exists
 	if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
@@ -135,9 +135,9 @@ func (r *Repository) Update(ctx context.Context, localPath, branch string, crede
 
 // GetOrUpdate gets a repository (cloning if necessary, updating if exists)
 func (r *Repository) GetOrUpdate(ctx context.Context, pr *models.PullRequest, credentials ports.Credentials) (string, error) {
-	localPath := r.GetLocalPath(pr.ProjectKey, pr.RepositorySlug)
+	localPath := r.GetLocalPath(pr.ProjectKey, pr.RepositorySlug, pr.ID)
 
-	if r.Exists(pr.ProjectKey, pr.RepositorySlug) {
+	if r.Exists(pr.ProjectKey, pr.RepositorySlug, pr.ID) {
 		// Repository exists, update it
 		r.logger.Debug("Repository exists locally, updating",
 			"path", localPath,
@@ -165,14 +165,14 @@ func (r *Repository) GetOrUpdate(ctx context.Context, pr *models.PullRequest, cr
 	return r.Clone(ctx, pr, credentials)
 }
 
-// GetLocalPath returns the local path for a repository
-func (r *Repository) GetLocalPath(projectKey, repoSlug string) string {
-	return filepath.Join(r.baseDir, projectKey, repoSlug)
+// GetLocalPath returns the local path for a repository PR clone
+func (r *Repository) GetLocalPath(projectKey, repoSlug string, prID int) string {
+	return filepath.Join(r.baseDir, projectKey, repoSlug, fmt.Sprintf("pr-%d", prID))
 }
 
 // Exists checks if a repository exists locally
-func (r *Repository) Exists(projectKey, repoSlug string) bool {
-	localPath := r.GetLocalPath(projectKey, repoSlug)
+func (r *Repository) Exists(projectKey, repoSlug string, prID int) bool {
+	localPath := r.GetLocalPath(projectKey, repoSlug, prID)
 	gitDir := filepath.Join(localPath, ".git")
 
 	_, err := os.Stat(gitDir)
@@ -180,8 +180,8 @@ func (r *Repository) Exists(projectKey, repoSlug string) bool {
 }
 
 // Clean removes a local repository
-func (r *Repository) Clean(projectKey, repoSlug string) error {
-	localPath := r.GetLocalPath(projectKey, repoSlug)
+func (r *Repository) Clean(projectKey, repoSlug string, prID int) error {
+	localPath := r.GetLocalPath(projectKey, repoSlug, prID)
 
 	r.logger.Info("Cleaning local repository",
 		"project", projectKey,

@@ -97,8 +97,9 @@ type ProjectProfile struct {
 }
 
 type QueueConfig struct {
-	MaxSize    int `yaml:"max_size"`
-	MaxRetries int `yaml:"max_retries"`
+	MaxSize     int `yaml:"max_size"`
+	MaxRetries  int `yaml:"max_retries"`
+	WorkerCount int `yaml:"concurrent_reviews"` // Number of PRs that can be reviewed in parallel
 }
 
 type CircuitBreakerConfig struct {
@@ -205,8 +206,9 @@ func getDefaultConfig() *Config {
 			Projects:  make(map[string]ProjectProfile),
 		},
 		Queue: QueueConfig{
-			MaxSize:    100,
-			MaxRetries: 3,
+			MaxSize:     100,
+			MaxRetries:  3,
+			WorkerCount: 1,
 		},
 		CircuitBreaker: CircuitBreakerConfig{
 			FailureThreshold: 3,
@@ -296,6 +298,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if maxRetries := getEnvAsInt("QUEUE_MAX_RETRIES", 0); maxRetries != 0 {
 		cfg.Queue.MaxRetries = maxRetries
+	}
+	if workerCount := getEnvAsInt("QUEUE_CONCURRENT_REVIEWS", 0); workerCount != 0 {
+		cfg.Queue.WorkerCount = workerCount
 	}
 
 	// Circuit breaker overrides
