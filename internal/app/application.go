@@ -223,10 +223,8 @@ func (a *Application) Start(ctx context.Context) error {
 		"port", a.config.Server.Port,
 	)
 
-	// Start queue
-	a.queue.Start(ctx)
-
-	// Start HTTP server in goroutine
+	// Start HTTP server
+	errChan := make(chan error, 1)
 	go func() {
 		a.logger.Info("Starting HTTP server",
 			"address", a.server.Addr,
@@ -234,8 +232,21 @@ func (a *Application) Start(ctx context.Context) error {
 
 		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			a.logger.Error("HTTP server error", "error", err)
+			errChan <- err
 		}
 	}()
+
+	// Wait briefly to catch immediate startup errors (like port already in use)
+	select {
+	case err := <-errChan:
+		return fmt.Errorf("failed to start HTTP server: %w", err)
+	case <-time.After(100 * time.Millisecond):
+		// Server started successfully, now start queue workers
+		a.logger.Info("HTTP server started successfully")
+	}
+
+	// Start queue workers
+	a.queue.Start(ctx)
 
 	return nil
 }

@@ -76,7 +76,7 @@ func (r *ValidationResult) LogResults(logger ports.Logger) {
 func ValidateStartup(cfg *config.Config, logger ports.Logger, vcsClient ports.VCSClient) *ValidationResult {
 	result := &ValidationResult{}
 
-	logger.Info("Running startup dependency checks...")
+	logger.Info("Running startup checks...")
 
 	// Check configuration
 	validateConfiguration(cfg, result)

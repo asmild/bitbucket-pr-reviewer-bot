@@ -206,15 +206,6 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add "queued" reaction if manual trigger (fire-and-forget)
-	if pr.IsManualTrigger() {
-		go func() {
-			if err := h.vcsClient.AddCommentReaction(ctx, pr.ProjectKey, pr.RepositorySlug, pr.ID, pr.CommentID, "CLOCK2"); err != nil {
-				h.logger.Warn("Failed to add queued reaction", "error", err)
-			}
-		}()
-	}
-
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte("Webhook received and queued for processing"))
 }

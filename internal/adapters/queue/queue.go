@@ -34,7 +34,7 @@ type Queue struct {
 	maxRetries   int
 	queueSize    int
 	workerCount  int
-	processingMu sync.Mutex // Protects processedItems set
+	processingMu sync.Mutex   // Protects processedItems set
 	processing   map[int]bool // Track which PR IDs are being processed
 }
 
@@ -51,6 +51,32 @@ type Config struct {
 	MaxRetries  int
 	QueueSize   int // Maximum number of items in the queue
 	WorkerCount int // Number of concurrent workers (default: 1)
+}
+
+// updateReaction is a helper method that calls the package-level updateReaction function
+func (q *Queue) updateReaction(pr *models.PullRequest, oldEmoji, newEmoji string) {
+	if !pr.IsManualTrigger() || pr.CommentID == 0 {
+		return
+	}
+
+	// Remove old reaction if specified
+	if oldEmoji != "" {
+		if err := q.vcsClient.RemoveCommentReaction(context.Background(), pr.ProjectKey, pr.RepositorySlug, pr.ID, pr.CommentID, oldEmoji); err != nil {
+			q.logger.Debug("Failed to remove old reaction (might not exist)",
+				"old_emoji", oldEmoji,
+				"comment_id", pr.CommentID,
+			)
+		}
+	}
+
+	// Add new reaction
+	if err := q.vcsClient.AddCommentReaction(context.Background(), pr.ProjectKey, pr.RepositorySlug, pr.ID, pr.CommentID, newEmoji); err != nil {
+		q.logger.Warn("Failed to add reaction",
+			"emoji", newEmoji,
+			"pr_id", pr.ID,
+			"error", err,
+		)
+	}
 }
 
 // NewQueue creates a new review queue
@@ -94,6 +120,9 @@ func (q *Queue) Enqueue(ctx context.Context, pr *models.PullRequest) (int, error
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	// Add "queued" reaction if manual trigger
+	q.updateReaction(pr, "", "QUEUED")
+
 	if !q.running {
 		return 0, errors.ErrQueueClosed
 	}
@@ -107,14 +136,8 @@ func (q *Queue) Enqueue(ctx context.Context, pr *models.PullRequest) (int, error
 			"max_size", q.queueSize,
 		)
 
-		// Add emoji reaction if manual trigger
-		if pr.IsManualTrigger() {
-			q.wg.Add(1)
-			go func(pr *models.PullRequest) {
-				defer q.wg.Done()
-				q.addReactionAsync(ctx, pr, "X")
-			}(pr)
-		}
+		// Add failed reaction if manual trigger
+		q.updateReaction(pr, "", "FAILED")
 
 		return 0, errors.ErrQueueFull
 	}
@@ -150,20 +173,6 @@ func (q *Queue) Enqueue(ctx context.Context, pr *models.PullRequest) (int, error
 	}
 
 	return position, nil
-}
-
-// addReactionAsync adds an emoji reaction asynchronously (fire and forget)
-func (q *Queue) addReactionAsync(ctx context.Context, pr *models.PullRequest, emoji string) {
-	if pr.CommentID == 0 {
-		return
-	}
-
-	if err := q.vcsClient.AddCommentReaction(ctx, pr.ProjectKey, pr.RepositorySlug, pr.ID, pr.CommentID, emoji); err != nil {
-		q.logger.Warn("Failed to add queue full reaction",
-			"pr_id", pr.ID,
-			"error", err,
-		)
-	}
 }
 
 // Start starts the queue workers
@@ -290,11 +299,7 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem, workerID int) 
 				q.logger.Error("Failed to post panic recovery comment", "error", err)
 			}
 
-			// Add error reaction if manual trigger
-			if item.pr.IsManualTrigger() {
-				q.vcsClient.RemoveCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "PROCESSING")
-				q.vcsClient.AddCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "X")
-			}
+			q.updateReaction(item.pr, "PROCESSING", "FAILED")
 		}
 
 		// Mark PR as no longer being processed
@@ -321,13 +326,7 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem, workerID int) 
 		"retry_count", item.retryCount,
 	)
 
-	// Add processing reaction if manual trigger
-	if item.pr.IsManualTrigger() {
-		go func() {
-			q.vcsClient.RemoveCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "CLOCK2")
-			q.vcsClient.AddCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "PROCESSING")
-		}()
-	}
+	q.updateReaction(item.pr, "QUEUED", "PROCESSING")
 
 	// Check if circuit breaker is open
 	if q.circuitBreaker.IsOpen() {
@@ -352,13 +351,7 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem, workerID int) 
 			"project", item.pr.ProjectKey,
 			"pr_id", item.pr.ID,
 		)
-		// Add success reaction if manual trigger
-		if item.pr.IsManualTrigger() {
-			go func() {
-				q.vcsClient.RemoveCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "PROCESSING")
-				q.vcsClient.AddCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "WHITE_CHECK_MARK")
-			}()
-		}
+		q.updateReaction(item.pr, "PROCESSING", "SUCCESS")
 	}
 }
 
@@ -385,14 +378,7 @@ func (q *Queue) handleProcessingError(ctx context.Context, item *queueItem, err 
 			"retry_count", item.retryCount,
 		)
 
-		// Add error reaction if manual trigger
-		if item.pr.IsManualTrigger() {
-			go func() {
-				q.vcsClient.RemoveCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "PROCESSING")
-				q.vcsClient.AddCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "X")
-			}()
-		}
-
+		q.updateReaction(item.pr, "PROCESSING", "FAILED")
 		q.postFailureComment(ctx, item, err)
 	}
 }
