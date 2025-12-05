@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	bitbucketcloud "github.com/asmild/bitbucket-pr-reviewer-bot/internal/adapters/bitbucket-cloud"
@@ -16,12 +17,30 @@ import (
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/adapters/profiles"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/adapters/queue"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/app/handlers"
+	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/app/validator"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/config"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/ports"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/services"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/infrastructure/ratelimit"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+// AppState represents the current state of the application
+type AppState string
+
+const (
+	StateStarting AppState = "starting"
+	StateRunning  AppState = "running"
+	StateFailed   AppState = "failed"
+)
+
+// StartupStatus tracks the current startup progress
+type StartupStatus struct {
+	State        AppState
+	CurrentStep  string
+	ErrorMessage string
+	mu           sync.RWMutex
+}
 
 // Application is the main application struct with all dependencies
 type Application struct {
@@ -45,6 +64,25 @@ type Application struct {
 
 	// HTTP server
 	server *http.Server
+
+	// Startup status
+	startupStatus *StartupStatus
+}
+
+// Get returns the current startup status (thread-safe)
+func (s *StartupStatus) Get() (interface{}, string, string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.State, s.CurrentStep, s.ErrorMessage
+}
+
+// SetStatus updates the startup status (thread-safe)
+func (s *StartupStatus) SetStatus(state AppState, step string, errMsg string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.State = state
+	s.CurrentStep = step
+	s.ErrorMessage = errMsg
 }
 
 // New creates and initializes a new Application
@@ -168,6 +206,10 @@ func New(cfg *config.Config) (*Application, error) {
 		circuitBreaker:   circuitBreaker,
 		rateLimiter:      rateLimiter,
 		queue:            reviewQueue,
+		startupStatus: &StartupStatus{
+			State:       StateStarting,
+			CurrentStep: "Initializing",
+		},
 	}
 
 	// Initialize HTTP server
@@ -195,15 +237,14 @@ func (a *Application) initHTTPServer() error {
 		handlers.WebhookConfig{
 			WebhookSecret:      a.config.Bitbucket.WebhookSecret,
 			AllowedProjectKeys: a.config.Bitbucket.AllowedProjectKeys,
-			TriggerKeyword:     a.config.Bitbucket.TriggerKeyword,
-			EventType:          a.config.Bitbucket.EventType,
+			TriggeringEvents:   a.config.Bitbucket.Events,
 			BitbucketUsername:  a.config.Bitbucket.User,
 		},
 	)
 
 	// Register routes
 	mux.HandleFunc("/webhook/bitbucket", webhookHandler.HandleWebhook)
-	mux.HandleFunc("/health", handlers.HandleHealth(a.queue, a.circuitBreaker))
+	mux.HandleFunc("/health", handlers.HandleHealth(a.queue, a.circuitBreaker, a.startupStatus))
 	mux.Handle("/metrics", promhttp.Handler())
 
 	a.server = &http.Server{
@@ -217,13 +258,40 @@ func (a *Application) initHTTPServer() error {
 	return nil
 }
 
-// Start starts the application
+// Start starts the application with step-by-step startup:
+// 1. Start HTTP server (so /health is available immediately)
+// 2. Run validation checks
+// 3. Start queue workers and other components
 func (a *Application) Start(ctx context.Context) error {
 	a.logger.Info("Starting application",
 		"port", a.config.Server.Port,
 	)
 
-	// Start HTTP server
+	// Step 1: Start HTTP server
+	if err := a.startHTTPServer(); err != nil {
+		return err
+	}
+
+	// Step 2: Run validation checks
+	if err := a.validateStartup(); err != nil {
+		a.startupStatus.SetStatus(StateFailed, "Validation failed", err.Error())
+		return err
+	}
+
+	// Step 3: Start components
+	if err := a.startComponents(ctx); err != nil {
+		a.startupStatus.SetStatus(StateFailed, "Failed to start components", err.Error())
+		return err
+	}
+
+	a.logger.Info("Application started successfully - ready to process webhooks")
+	return nil
+}
+
+// startHTTPServer starts the HTTP server and waits for it to be listening
+func (a *Application) startHTTPServer() error {
+	a.startupStatus.SetStatus(StateStarting, "Starting HTTP server", "")
+
 	errChan := make(chan error, 1)
 	go func() {
 		a.logger.Info("Starting HTTP server",
@@ -232,6 +300,7 @@ func (a *Application) Start(ctx context.Context) error {
 
 		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			a.logger.Error("HTTP server error", "error", err)
+			a.startupStatus.SetStatus(StateFailed, "HTTP server failed", err.Error())
 			errChan <- err
 		}
 	}()
@@ -241,12 +310,39 @@ func (a *Application) Start(ctx context.Context) error {
 	case err := <-errChan:
 		return fmt.Errorf("failed to start HTTP server: %w", err)
 	case <-time.After(100 * time.Millisecond):
-		// Server started successfully, now start queue workers
 		a.logger.Info("HTTP server started successfully")
+		return nil
 	}
+}
+
+// validateStartup runs all startup validation checks
+func (a *Application) validateStartup() error {
+	a.startupStatus.SetStatus(StateStarting, "Running validation checks", "")
+
+	validationResult := validator.ValidateStartup(a.config, a.logger, a.vcsClient)
+	validationResult.LogResults(a.logger)
+
+	if !validationResult.IsValid() {
+		return fmt.Errorf("startup validation failed")
+	}
+
+	a.logger.Info("All startup dependency checks passed")
+	a.logger.Info("")
+
+	return nil
+}
+
+// startComponents initializes queue workers and other components
+func (a *Application) startComponents(ctx context.Context) error {
+	a.startupStatus.SetStatus(StateStarting, "Initializing queue workers", "")
 
 	// Start queue workers
 	a.queue.Start(ctx)
+	a.logger.Info("Queue workers started")
+
+	// Mark as fully running
+	a.startupStatus.SetStatus(StateRunning, "All components running", "")
+	a.logger.Info("Application fully started and ready")
 
 	return nil
 }

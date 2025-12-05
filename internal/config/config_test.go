@@ -23,8 +23,18 @@ func TestGetDefaultConfig(t *testing.T) {
 	if cfg.Bitbucket.BaseURL != "" {
 		t.Errorf("Expected default BaseURL empty, got '%s'", cfg.Bitbucket.BaseURL)
 	}
-	if cfg.Bitbucket.EventType != "comment_added" {
-		t.Errorf("Expected default EventType 'comment_added', got '%s'", cfg.Bitbucket.EventType)
+
+	// Test default triggering events
+	if len(cfg.Bitbucket.Events) != 1 {
+		t.Errorf("Expected 1 default event, got %d", len(cfg.Bitbucket.Events))
+	}
+	if cfg.Bitbucket.Events[0].GetType() != EventTypeCommentAdded {
+		t.Errorf("Expected default event type 'comment_added', got '%s'", cfg.Bitbucket.Events[0].GetType())
+	}
+
+	// Test that RawEvents is empty by default
+	if len(cfg.Bitbucket.RawEvents) != 0 {
+		t.Errorf("Expected empty RawEvents, got %d", len(cfg.Bitbucket.RawEvents))
 	}
 }
 
@@ -50,8 +60,10 @@ bitbucket:
   allowed_project_keys:
     - TESTPROJ1
     - TESTPROJ2
-  event_type: "comment_added"
-  trigger_keyword: "/lgtm"
+  triggering_events:
+    - type: pr_opened
+    - type: comment_added
+      keyword: "/lgtm"
 
 circuit_breaker:
   failure_threshold: 5
@@ -76,7 +88,7 @@ logging:
 		t.Fatalf("Failed to write test config file: %v", err)
 	}
 
-	cfg := LoadWithPath(configPath)
+	cfg := Load(configPath)
 
 	// Verify YAML values are loaded correctly (sample key fields)
 	if cfg.Server.Port != 9999 {
@@ -97,6 +109,12 @@ logging:
 	if len(cfg.Bitbucket.AllowedProjectKeys) != 2 || cfg.Bitbucket.AllowedProjectKeys[0] != "TESTPROJ1" {
 		t.Errorf("Expected project keys [TESTPROJ1, TESTPROJ2], got %v", cfg.Bitbucket.AllowedProjectKeys)
 	}
+
+	// Test triggering events
+	if len(cfg.Bitbucket.Events) != 2 {
+		t.Errorf("Expected 2 events, got %d", len(cfg.Bitbucket.Events))
+	}
+
 	// Test computed duration
 	expectedDuration := 60000 * time.Millisecond
 	if cfg.Metrics.Persistence.SaveInterval != expectedDuration {
@@ -125,8 +143,9 @@ bitbucket:
   webhook_secret: yamlsecret
   allowed_project_keys:
     - YAMLPROJ
-  event_type: "pr_opened"
-  trigger_keyword: "/approve"
+  triggering_events:
+    - type: comment_added
+      keyword: "/approve"
 `
 
 	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
@@ -135,17 +154,17 @@ bitbucket:
 
 	// Set environment variables (these should override YAML)
 	oldEnvVars := map[string]string{
-		"PORT":                           os.Getenv("PORT"),
-		"CLAUDE_MODEL":                   os.Getenv("CLAUDE_MODEL"),
-		"CLAUDE_TIMEOUT_CONFIG":          os.Getenv("CLAUDE_TIMEOUT_CONFIG"),
-		"BITBUCKET_SELF_HOSTED":          os.Getenv("BITBUCKET_SELF_HOSTED"),
-		"BITBUCKET_BASE_URL":             os.Getenv("BITBUCKET_BASE_URL"),
-		"BITBUCKET_USER":                 os.Getenv("BITBUCKET_USER"),
-		"BITBUCKET_TOKEN":                os.Getenv("BITBUCKET_TOKEN"),
-		"BITBUCKET_WEBHOOK_SECRET":       os.Getenv("BITBUCKET_WEBHOOK_SECRET"),
-		"BITBUCKET_ALLOWED_PROJECT_KEYS": os.Getenv("BITBUCKET_ALLOWED_PROJECT_KEYS"),
-		"BITBUCKET_EVENT_TYPE":           os.Getenv("BITBUCKET_EVENT_TYPE"),
-		"TRIGGER_KEYWORD":                os.Getenv("TRIGGER_KEYWORD"),
+		"PORT":                             os.Getenv("PORT"),
+		"CLAUDE_MODEL":                     os.Getenv("CLAUDE_MODEL"),
+		"CLAUDE_TIMEOUT_CONFIG":            os.Getenv("CLAUDE_TIMEOUT_CONFIG"),
+		"BITBUCKET_SELF_HOSTED":            os.Getenv("BITBUCKET_SELF_HOSTED"),
+		"BITBUCKET_BASE_URL":               os.Getenv("BITBUCKET_BASE_URL"),
+		"BITBUCKET_USER":                   os.Getenv("BITBUCKET_USER"),
+		"BITBUCKET_TOKEN":                  os.Getenv("BITBUCKET_TOKEN"),
+		"BITBUCKET_WEBHOOK_SECRET":         os.Getenv("BITBUCKET_WEBHOOK_SECRET"),
+		"BITBUCKET_ALLOWED_PROJECT_KEYS":   os.Getenv("BITBUCKET_ALLOWED_PROJECT_KEYS"),
+		"BITBUCKET_PR_EVENT_PR_OPENED":     os.Getenv("BITBUCKET_PR_EVENT_PR_OPENED"),
+		"BITBUCKET_PR_EVENT_COMMENT_ADDED": os.Getenv("BITBUCKET_PR_EVENT_COMMENT_ADDED"),
 	}
 
 	// Cleanup function to restore old env vars
@@ -169,10 +188,10 @@ bitbucket:
 	os.Setenv("BITBUCKET_TOKEN", "envtoken")
 	os.Setenv("BITBUCKET_WEBHOOK_SECRET", "envsecret")
 	os.Setenv("BITBUCKET_ALLOWED_PROJECT_KEYS", "ENVPROJ1, ENVPROJ2, ENVPROJ3")
-	os.Setenv("BITBUCKET_EVENT_TYPE", "comment_added")
-	os.Setenv("TRIGGER_KEYWORD", "/env-review")
+	os.Setenv("BITBUCKET_PR_EVENT_PR_OPENED", "true")
+	os.Setenv("BITBUCKET_PR_EVENT_COMMENT_ADDED", "/env-review")
 
-	cfg := LoadWithPath(configPath)
+	cfg := Load(configPath)
 
 	// Verify env vars override YAML values (test key override mechanism)
 	if cfg.Server.Port != 9000 {
@@ -192,6 +211,11 @@ bitbucket:
 	}
 	if len(cfg.Bitbucket.AllowedProjectKeys) != 3 || cfg.Bitbucket.AllowedProjectKeys[0] != "ENVPROJ1" {
 		t.Errorf("Expected 3 project keys from env, got %v", cfg.Bitbucket.AllowedProjectKeys)
+	}
+
+	// Verify events are overridden/merged
+	if len(cfg.Bitbucket.Events) != 2 {
+		t.Errorf("Expected 2 events (merged), got %d", len(cfg.Bitbucket.Events))
 	}
 }
 
@@ -214,7 +238,7 @@ func TestConfigWithoutYAMLFile(t *testing.T) {
 	os.Setenv("BITBUCKET_USER", "testuser")
 	os.Setenv("BITBUCKET_TOKEN", "testtoken")
 
-	cfg := LoadWithPath("/nonexistent/config.yaml")
+	cfg := Load("/nonexistent/config.yaml")
 
 	// Verify defaults are used when no YAML file exists
 	if cfg.Server.Port != 8080 || cfg.Claude.Model != "sonnet" {
@@ -224,6 +248,11 @@ func TestConfigWithoutYAMLFile(t *testing.T) {
 	if cfg.Bitbucket.User != "testuser" || cfg.Bitbucket.Token != "testtoken" {
 		t.Errorf("Expected env vars to apply even without YAML")
 	}
+
+	// Should have default events
+	if len(cfg.Bitbucket.Events) != 1 {
+		t.Errorf("Expected 1 default event, got %d", len(cfg.Bitbucket.Events))
+	}
 }
 
 func TestValidation(t *testing.T) {
@@ -231,49 +260,69 @@ func TestValidation(t *testing.T) {
 		name        string
 		user        string
 		token       string
-		eventType   string
+		events      []TriggeringEvent
 		expectError bool
 	}{
 		{
-			name:        "Valid config with pr_opened",
-			user:        "testuser",
-			token:       "testtoken",
-			eventType:   "pr_opened",
+			name:  "Valid config with pr_opened",
+			user:  "testuser",
+			token: "testtoken",
+			events: []TriggeringEvent{
+				&PROpenedEvent{},
+			},
 			expectError: false,
 		},
 		{
-			name:        "Valid config with comment_added",
-			user:        "testuser",
-			token:       "testtoken",
-			eventType:   "comment_added",
+			name:  "Valid config with comment_added",
+			user:  "testuser",
+			token: "testtoken",
+			events: []TriggeringEvent{
+				&CommentAddedEvent{Keyword: "/review"},
+			},
 			expectError: false,
 		},
 		{
-			name:        "Missing user",
-			user:        "",
-			token:       "testtoken",
-			eventType:   "pr_opened",
+			name:  "Valid config with both events",
+			user:  "testuser",
+			token: "testtoken",
+			events: []TriggeringEvent{
+				&PROpenedEvent{},
+				&CommentAddedEvent{Keyword: "/review"},
+			},
+			expectError: false,
+		},
+		{
+			name:  "Missing user",
+			user:  "",
+			token: "testtoken",
+			events: []TriggeringEvent{
+				&PROpenedEvent{},
+			},
 			expectError: true,
 		},
 		{
-			name:        "Missing token",
-			user:        "testuser",
-			token:       "",
-			eventType:   "pr_opened",
+			name:  "Missing token",
+			user:  "testuser",
+			token: "",
+			events: []TriggeringEvent{
+				&PROpenedEvent{},
+			},
 			expectError: true,
 		},
 		{
-			name:        "Invalid event type",
-			user:        "testuser",
-			token:       "testtoken",
-			eventType:   "invalid_event",
+			name:  "Invalid event - comment_added without keyword",
+			user:  "testuser",
+			token: "testtoken",
+			events: []TriggeringEvent{
+				&CommentAddedEvent{Keyword: ""},
+			},
 			expectError: true,
 		},
 		{
 			name:        "Missing both user and token",
 			user:        "",
 			token:       "",
-			eventType:   "pr_opened",
+			events:      []TriggeringEvent{&PROpenedEvent{}},
 			expectError: true,
 		},
 	}
@@ -283,7 +332,7 @@ func TestValidation(t *testing.T) {
 			cfg := getDefaultConfig()
 			cfg.Bitbucket.User = tt.user
 			cfg.Bitbucket.Token = tt.token
-			cfg.Bitbucket.EventType = tt.eventType
+			cfg.Bitbucket.Events = tt.events
 
 			err := cfg.Validate()
 			if tt.expectError && err == nil {
@@ -309,17 +358,6 @@ func TestValidationError(t *testing.T) {
 }
 
 func TestGetEnvHelpers(t *testing.T) {
-	// Test getEnv
-	os.Setenv("TEST_STRING", "testvalue")
-	defer os.Unsetenv("TEST_STRING")
-
-	if val := getEnv("TEST_STRING", "default"); val != "testvalue" {
-		t.Errorf("Expected 'testvalue', got '%s'", val)
-	}
-	if val := getEnv("NONEXISTENT", "default"); val != "default" {
-		t.Errorf("Expected 'default', got '%s'", val)
-	}
-
 	// Test getEnvAsInt
 	os.Setenv("TEST_INT", "123")
 	defer os.Unsetenv("TEST_INT")
@@ -330,6 +368,8 @@ func TestGetEnvHelpers(t *testing.T) {
 	if val := getEnvAsInt("NONEXISTENT", 456); val != 456 {
 		t.Errorf("Expected 456, got %d", val)
 	}
+	os.Setenv("TEST_STRING", "notanumber")
+	defer os.Unsetenv("TEST_STRING")
 	if val := getEnvAsInt("TEST_STRING", 789); val != 789 {
 		t.Errorf("Expected 789 for invalid int, got %d", val)
 	}
@@ -372,7 +412,7 @@ bitbucket:
 		t.Fatalf("Failed to write test config file: %v", err)
 	}
 
-	cfg := LoadWithPath(configPath)
+	cfg := Load(configPath)
 
 	// Verify specified values
 	if cfg.Server.Port != 4000 || cfg.Bitbucket.User != "testuser" {
@@ -385,5 +425,149 @@ bitbucket:
 	}
 	if cfg.Bitbucket.SelfHosted != false || cfg.Bitbucket.BaseURL != "" {
 		t.Errorf("Expected Bitbucket defaults: SelfHosted=false, BaseURL=empty")
+	}
+
+	// Should have default events since not specified in YAML
+	if len(cfg.Bitbucket.Events) != 1 {
+		t.Errorf("Expected 1 default event, got %d", len(cfg.Bitbucket.Events))
+	}
+}
+
+func TestTriggeringEventsFromYAML(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "events-config.yaml")
+
+	yamlContent := `
+bitbucket:
+  user: testuser
+  token: testtoken
+  triggering_events:
+    - type: pr_opened
+    - type: comment_added
+      keyword: "/test"
+`
+
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("Failed to write test config file: %v", err)
+	}
+
+	cfg := Load(configPath)
+
+	// Verify events loaded from YAML
+	if len(cfg.Bitbucket.Events) != 2 {
+		t.Fatalf("Expected 2 events, got %d", len(cfg.Bitbucket.Events))
+	}
+
+	// Check event types
+	foundPROpened := false
+	foundCommentAdded := false
+	for _, event := range cfg.Bitbucket.Events {
+		if event.GetType() == EventTypePROpened {
+			foundPROpened = true
+		}
+		if event.GetType() == EventTypeCommentAdded {
+			foundCommentAdded = true
+			commentEvent, ok := event.(*CommentAddedEvent)
+			if !ok {
+				t.Error("Expected CommentAddedEvent type")
+			} else if commentEvent.Keyword != "/test" {
+				t.Errorf("Expected keyword '/test', got '%s'", commentEvent.Keyword)
+			}
+		}
+	}
+
+	if !foundPROpened {
+		t.Error("Expected to find pr_opened event")
+	}
+	if !foundCommentAdded {
+		t.Error("Expected to find comment_added event")
+	}
+}
+
+func TestTriggeringEventsFromEnv(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "empty-config.yaml")
+
+	yamlContent := `
+bitbucket:
+  user: testuser
+  token: testtoken
+`
+
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("Failed to write test config file: %v", err)
+	}
+
+	oldEnvVars := map[string]string{
+		"BITBUCKET_PR_EVENT_PR_OPENED":     os.Getenv("BITBUCKET_PR_EVENT_PR_OPENED"),
+		"BITBUCKET_PR_EVENT_COMMENT_ADDED": os.Getenv("BITBUCKET_PR_EVENT_COMMENT_ADDED"),
+	}
+
+	defer func() {
+		for key, val := range oldEnvVars {
+			if val == "" {
+				os.Unsetenv(key)
+			} else {
+				os.Setenv(key, val)
+			}
+		}
+	}()
+
+	os.Setenv("BITBUCKET_PR_EVENT_PR_OPENED", "true")
+	os.Setenv("BITBUCKET_PR_EVENT_COMMENT_ADDED", "/analyze")
+
+	cfg := Load(configPath)
+
+	// Verify events loaded from env
+	if len(cfg.Bitbucket.Events) != 2 {
+		t.Fatalf("Expected 2 events, got %d", len(cfg.Bitbucket.Events))
+	}
+}
+
+func TestParseCommaSeparated(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string
+	}{
+		{
+			name:     "empty string",
+			input:    "",
+			expected: []string{},
+		},
+		{
+			name:     "single value",
+			input:    "TEST1",
+			expected: []string{"TEST1"},
+		},
+		{
+			name:     "multiple values",
+			input:    "TEST1,TEST2,TEST3",
+			expected: []string{"TEST1", "TEST2", "TEST3"},
+		},
+		{
+			name:     "values with spaces",
+			input:    "TEST1, TEST2 , TEST3",
+			expected: []string{"TEST1", "TEST2", "TEST3"},
+		},
+		{
+			name:     "trailing comma",
+			input:    "TEST1,TEST2,",
+			expected: []string{"TEST1", "TEST2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseCommaSeparated(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Errorf("Expected %d items, got %d", len(tt.expected), len(result))
+			}
+			for i, expected := range tt.expected {
+				if i >= len(result) || result[i] != expected {
+					t.Errorf("Expected '%s' at index %d, got '%s'", expected, i, result[i])
+				}
+			}
+		})
 	}
 }

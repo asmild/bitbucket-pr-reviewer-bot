@@ -1,16 +1,16 @@
 # Bitbucket PR Reviewer Bot
 
-An intelligent automated pull request reviewer that integrates Bitbucket Data Center with Claude AI to provide comprehensive code reviews.
+An automated pull request reviewer for Bitbucket Data Center that uses Claude AI to provide code reviews.
 
 ## Features
 
 - Automated PR reviews powered by Claude AI
 - Dual trigger modes: automatic on PR open or manual via comments
-- Customizable review templates per project/repository
+- Customizable review profiles per project/repository
 - Circuit breaker pattern for fault tolerance
-- Prometheus metrics and monitoring
-- Webhook signature validation for security
-- Docker and Kubernetes deployment support
+- Prometheus metrics and health monitoring
+- Webhook signature validation
+- Queue management with retry logic
 
 ## Quick Start
 
@@ -23,353 +23,111 @@ An intelligent automated pull request reviewer that integrates Bitbucket Data Ce
 
 ### Installation
 
-#### Option 1: Download Pre-built Binary (Recommended)
-
-Download the latest binary for your platform from [GitHub Releases](https://github.com/asmild/bitbucket-pr-reviewer-bot/releases):
-
-```bash
-# Linux AMD64
-wget https://github.com/asmild/bitbucket-pr-reviewer-bot/releases/latest/download/bb-pr-reviewer-linux-amd64
-chmod +x bb-pr-reviewer-linux-amd64
-./bb-pr-reviewer-linux-amd64
-
-# macOS ARM64 (Apple Silicon)
-wget https://github.com/asmild/bitbucket-pr-reviewer-bot/releases/latest/download/bb-pr-reviewer-darwin-arm64
-chmod +x bb-pr-reviewer-darwin-arm64
-./bb-pr-reviewer-darwin-arm64
-
-# macOS AMD64 (Intel)
-wget https://github.com/asmild/bitbucket-pr-reviewer-bot/releases/latest/download/bb-pr-reviewer-darwin-amd64
-chmod +x bb-pr-reviewer-darwin-amd64
-./bb-pr-reviewer-darwin-amd64
-
-# Windows
-# Download bb-pr-reviewer-windows.exe from the releases page
-```
-
-#### Option 2: Build from Source
-
-1. Clone the repository:
+1. Clone and build:
 ```bash
 git clone https://github.com/asmild/bitbucket-pr-reviewer-bot.git
 cd bitbucket-pr-reviewer-bot
-```
-
-2. Build using Makefile:
-```bash
 make build-local
-./bb-pr-reviewer
 ```
 
-Or build manually:
-```bash
-go build -o bb-pr-reviewer ./cmd/server/main.go
-./bb-pr-reviewer
-```
-
-#### Configuration
-
-Create configuration file:
+2. Configure:
 ```bash
 cp config.example.yaml config.yaml
+# Edit config.yaml with your settings
 ```
 
-Edit `config.yaml` with your Bitbucket credentials:
+Minimal required configuration:
 ```yaml
 bitbucket:
+  self-hosted: true
+  base_url: "https://bitbucket.example.com"
   user: your-bot-username
   token: your-app-password
-  webhook_secret: your-webhook-secret
-  allowed_project_keys:
-    - PROJ1
-    - PROJ2
-  event_type: "comment_added"
-  trigger_keyword: "/review"
 ```
 
-### Docker Deployment
-
+3. Run:
 ```bash
-docker build -t pr-reviewer:latest .
-
-docker run -d \
-  --name pr-reviewer \
-  -p 8080:8080 \
-  -e BITBUCKET_USER=your-username \
-  -e BITBUCKET_TOKEN=your-token \
-  -v $(pwd)/config.yaml:/app/config.yaml \
-  -v $(pwd)/templates:/app/templates \
-  pr-reviewer:latest
+./bin/bb-pr-reviewer
 ```
+
+The application will:
+- Validate all dependencies (Claude CLI, Bitbucket connection, git, profiles)
+- Start HTTP server (default port 8080)
+- Start queue workers
+- Exit immediately if port is in use or dependencies are missing
 
 ### Bitbucket Webhook Setup
 
-1. Navigate to Repository/Project Settings → Webhooks
-2. Create webhook with:
+In Bitbucket Data Center:
+1. Go to Repository/Project Settings → Webhooks
+2. Add webhook:
    - URL: `https://your-server.com/webhook/bitbucket`
-   - Secret: Your configured webhook secret
-   - Events:
-     - `Pull request opened` (for automatic reviews)
-     - `Pull request comment added` (for manual reviews)
+   - Secret: (optional, for HMAC validation)
+   - Events: `Pull request opened` and/or `Pull request comment added`
 
 ## Usage
 
-### Automatic Review Mode
+**Automatic mode** (`event_type: "pr_opened"`): Reviews PRs automatically when opened
 
-Configure `event_type: "pr_opened"` in your config. PRs will be automatically reviewed when opened.
-
-### Manual Review Mode (Comment-Triggered)
-
-Configure `event_type: "comment_added"` in your config. Trigger reviews by mentioning the bot:
-
+**Manual mode** (`event_type: "comment_added"`): Trigger with comment:
 ```
-@pr-review-bot /review
+@bot-username /review
 ```
-
-The bot will:
-1. Acknowledge with an eyes reaction
-2. Clone the repository and checkout the source branch
-3. Analyze the code changes using Claude AI
-4. Post a detailed review comment with findings
 
 ## Configuration
 
-The bot supports configuration via YAML file and environment variables (env vars override YAML).
-
-### Minimal Configuration
-
-```yaml
-bitbucket:
-  user: bot-username
-  token: app-password
-```
-
-### Environment Variables
-
-```bash
-export BITBUCKET_USER=bot-username
-export BITBUCKET_TOKEN=your-token
-export BITBUCKET_WEBHOOK_SECRET=your-secret
-export PORT=8080
-```
-
-For detailed configuration options, see [Configuration Guide](docs/configuration.md).
+See [Configuration Guide](docs/configuration.md) for all options. Configuration via YAML file or environment variables (env vars take precedence).
 
 ## Profiles
 
-Profiles control how Claude reviews your code. Create custom profiles for different projects or repositories.
-
-### Profile Structure
-
-```
-profiles/
-├── default.md
-├── backend-review.md
-├── performance-review.md
-└── security-focused.md
-```
-
-### Configure Per-Project Profiles
-
-```yaml
-profiles:
-  directory: ./profiles
-  default: default
-  projects:
-    BACKEND:
-      profile: performance-review
-      repositories:
-        api-gateway: security-focused
-    FRONTEND:
-      profile: quick-review
-```
-
-For detailed profile documentation, see [Profiles Guide](docs/profiles.md).
+Profiles are markdown files that define review instructions for Claude. See [Profiles Guide](docs/profiles.md) for details on creating custom profiles per project or repository.
 
 ## API Endpoints
 
-### Health Check
-
-```
-GET /health
-```
-
-Returns service status.
-
-### Metrics
-
-```
-GET /metrics
-```
-
-Returns Prometheus metrics including:
-- Total PRs reviewed
-- Success/failure rates
-- Review duration
-- Issues found
-- LGTM count
-
-### Webhook
-
-```
-POST /webhook/bitbucket
-```
-
-Receives Bitbucket webhook events for PR reviews.
+- `GET /health` - Health check (queue status, circuit breaker state)
+- `GET /metrics` - Prometheus metrics
+- `POST /webhook/bitbucket` - Webhook receiver for Bitbucket events
 
 ## Monitoring
 
-The bot exposes Prometheus metrics at `/metrics`:
-
-```
-# Review metrics
-pr_reviewer_review_completed_total{project="CI",status="lgtm"} 45
-pr_reviewer_review_failed_total{project="CI",error_type="timeout"} 2
-pr_reviewer_review_duration_seconds_sum{project="CI"} 540.5
-pr_reviewer_review_duration_seconds_count{project="CI"} 45
-
-# Queue and system metrics
-pr_reviewer_queue_size 3
-pr_reviewer_circuit_breaker_state{name="main"} 0
-```
-
-For detailed metrics documentation including histogram interpretation, see [Metrics Guide](docs/metrics.md).
+Prometheus metrics available at `/metrics`. See [Metrics Guide](docs/metrics.md) for details.
 
 ## Architecture
 
 ```
-├── cmd/server/              # Application entry point
+├── cmd/server/                  # Application entry point
 ├── internal/
-│   ├── bitbucket/          # Bitbucket API client
-│   ├── claude/             # Claude AI integration
-│   ├── config/             # Configuration management
-│   ├── circuitbreaker/     # Circuit breaker pattern
-│   ├── git/                # Git operations
-│   ├── http/               # HTTP utilities
-│   ├── logger/             # Structured logging
-│   ├── metrics/            # Prometheus metrics
-│   ├── queue/              # PR processing queue
-│   ├── startup/            # Startup dependency validation
-│   └── profiles/           # Profile management
-├── pkg/models/             # Data models
-├── profiles/               # Review profiles
-└── docs/                   # Documentation
+│   ├── adapters/               # External integrations (hexagonal architecture)
+│   │   ├── bitbucket-dc/      # Bitbucket Data Center client & webhook parser
+│   │   ├── claude/            # Claude AI reviewer
+│   │   ├── git/               # Git repository operations
+│   │   ├── logger/            # Structured logging
+│   │   ├── metrics/           # Prometheus metrics collector
+│   │   ├── profiles/          # Profile provider
+│   │   ├── queue/             # Review queue with workers
+│   │   └── circuitbreaker/    # Circuit breaker implementation
+│   ├── app/                   # Application layer (HTTP handlers, validators)
+│   ├── config/                # Configuration management
+│   ├── domain/                # Business logic
+│   │   ├── models/            # Domain models (PR, Review, etc.)
+│   │   ├── ports/             # Interface definitions
+│   │   ├── services/          # Core review service
+│   │   └── errors/            # Domain errors
+│   └── infrastructure/        # Cross-cutting concerns (rate limiting, retry)
+├── profiles/                   # Review profile templates (markdown)
+└── docs/                      # Documentation
 ```
 
 ## Documentation
 
-- [Configuration Guide](docs/configuration.md) - Detailed configuration options
-- [Profiles Guide](docs/profiles.md) - Creating and managing review profiles
-- [Deployment Guide](docs/deployment.md) - Production deployment instructions
-- [Metrics Guide](docs/metrics.md) - Monitoring and metrics documentation
-
-## Development
-
-### Running Tests
-
-```bash
-go test ./...
-```
-
-### Code Coverage
-
-```bash
-go test -cover ./...
-```
-
-### Building
-
-Build optimized cross-platform binaries:
-```bash
-make build
-```
-
-Or build for local development:
-```bash
-make build-local
-```
-
-## Deployment Options
-
-The bot supports multiple deployment options:
-
-- **Systemd Service** - Linux service management
-- **Docker Container** - Containerized deployment
-- **Docker Compose** - Multi-container orchestration
-- **Kubernetes** - Cloud-native deployment
-
-See [Deployment Guide](docs/deployment.md) for detailed instructions.
-
-## Metrics and Observability
-
-### Available Metrics
-
-- `pr_reviewer_webhook_received_total` - Total webhooks received by event type
-- `pr_reviewer_review_started_total` - Reviews started by project
-- `pr_reviewer_review_completed_total` - Completed reviews by project and status
-- `pr_reviewer_review_failed_total` - Failed reviews by project and error type
-- `pr_reviewer_review_duration_seconds` - Review duration histogram
-- `pr_reviewer_queue_size` - Current queue size
-- `pr_reviewer_git_clone_duration_seconds` - Git operation duration
-- `pr_reviewer_circuit_breaker_state` - Circuit breaker status
-
-See [Metrics Guide](docs/metrics.md) for detailed documentation, PromQL queries, and Grafana dashboard examples.
-
-### Logging
-
-Structured JSON logs with configurable levels:
-- `debug` - Detailed diagnostic information
-- `info` - General operational messages
-- `warn` - Warning conditions
-- `error` - Error conditions
-
-Logs are written to:
-- Console (stdout) - Real-time monitoring
-- Files (`./logs/`) - Persistent storage with rotation
-
-## Troubleshooting
-
-### Common Issues
-
-**Service won't start:**
-- Check `bitbucket.user` and `bitbucket.token` are set
-- Verify port is not in use
-- Check logs for configuration errors
-
-**Webhooks not received:**
-- Verify webhook URL is accessible
-- Check firewall rules
-- Validate webhook secret matches
-
-**Reviews timeout:**
-- Increase `claude.timeout_minutes`
-- Simplify template instructions
-- Check Claude API rate limits
-
-See [Deployment Guide](docs/deployment.md) for detailed troubleshooting.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
-
-## Acknowledgments
-
-This project was inspired by [bitbucket-automatic-pr-reviewer](https://github.com/TinTinWinata/bitbucket-automatic-pr-reviewer) and adapted for Bitbucket Data Center with a complete rewrite in Go, adding features like:
-- Native Bitbucket Data Center support
-- Startup dependency validation
-- Multi-location configuration
-- Custom template system per project/repository
+- [Configuration Guide](docs/configuration.md)
+- [Profiles Guide](docs/profiles.md)
+- [Deployment Guide](docs/deployment.md)
+- [Metrics Guide](docs/metrics.md)
+- [Architecture Explained](docs/architecture-explained.md)
 
 ## License
 
 MIT License - See LICENSE file for details
 
-## Support
-
-- GitHub Issues: Report bugs and request features
-- Documentation: See `docs/` directory
-- Logs: Check application logs for errors
+TODO: support multiple events.

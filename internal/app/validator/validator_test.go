@@ -131,7 +131,6 @@ func TestValidateConfiguration(t *testing.T) {
 			Bitbucket: config.BitbucketConfig{
 				User:      "testuser",
 				Token:     "testtoken",
-				EventType: "comment_added",
 			},
 			Claude: config.ClaudeConfig{
 				TimeoutMinutes: 10,
@@ -152,7 +151,6 @@ func TestValidateConfiguration(t *testing.T) {
 			Bitbucket: config.BitbucketConfig{
 				User:      "", // Missing
 				Token:     "testtoken",
-				EventType: "comment_added",
 			},
 			Claude: config.ClaudeConfig{TimeoutMinutes: 10},
 		}
@@ -183,7 +181,6 @@ func TestValidateConfiguration(t *testing.T) {
 			Bitbucket: config.BitbucketConfig{
 				User:      "testuser",
 				Token:     "", // Missing
-				EventType: "comment_added",
 			},
 			Claude: config.ClaudeConfig{TimeoutMinutes: 10},
 		}
@@ -212,43 +209,12 @@ func TestValidateConfiguration(t *testing.T) {
 		}
 	})
 
-	t.Run("detects invalid event type", func(t *testing.T) {
-		cfg := &config.Config{
-			Server: config.ServerConfig{Port: 8080},
-			Bitbucket: config.BitbucketConfig{
-				User:      "testuser",
-				Token:     "testtoken",
-				EventType: "invalid_event", // Invalid
-			},
-			Claude: config.ClaudeConfig{TimeoutMinutes: 10},
-		}
-
-		result := &ValidationResult{}
-		validateConfiguration(cfg, result)
-
-		if result.IsValid() {
-			t.Error("expected validation to fail for invalid event type")
-		}
-
-		found := false
-		for _, err := range result.Errors {
-			if contains(err.Issue, "event_type") {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("expected error about invalid event_type")
-		}
-	})
-
 	t.Run("detects invalid Claude timeout", func(t *testing.T) {
 		cfg := &config.Config{
 			Server: config.ServerConfig{Port: 8080},
 			Bitbucket: config.BitbucketConfig{
 				User:      "testuser",
 				Token:     "testtoken",
-				EventType: "comment_added",
 			},
 			Claude: config.ClaudeConfig{
 				TimeoutMinutes: 0, // Invalid
@@ -282,7 +248,6 @@ func TestValidateConfiguration(t *testing.T) {
 			Bitbucket: config.BitbucketConfig{
 				User:      "",              // Missing
 				Token:     "",              // Missing
-				EventType: "invalid_event", // Invalid
 			},
 			Claude: config.ClaudeConfig{
 				TimeoutMinutes: -5, // Invalid
@@ -311,7 +276,6 @@ func TestValidateConfiguration(t *testing.T) {
 				Bitbucket: config.BitbucketConfig{
 					User:      "testuser",
 					Token:     "testtoken",
-					EventType: "comment_added",
 				},
 				Claude: config.ClaudeConfig{TimeoutMinutes: 10},
 			}
@@ -334,7 +298,6 @@ func TestValidateConfiguration(t *testing.T) {
 				Bitbucket: config.BitbucketConfig{
 					User:      "testuser",
 					Token:     "testtoken",
-					EventType: eventType,
 				},
 				Claude: config.ClaudeConfig{TimeoutMinutes: 10},
 			}

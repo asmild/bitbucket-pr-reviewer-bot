@@ -3,6 +3,7 @@ package handlers
 import (
 	"testing"
 
+	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/config"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/models"
 )
 
@@ -13,7 +14,9 @@ func TestShouldProcessComment(t *testing.T) {
 	handler := &WebhookHandler{
 		config: WebhookConfig{
 			BitbucketUsername: botUsername,
-			TriggerKeyword:    triggerKeyword,
+			TriggeringEvents: []config.TriggeringEvent{
+				&config.CommentAddedEvent{Keyword: triggerKeyword},
+			},
 		},
 		logger: &mockLogger{},
 	}
@@ -247,7 +250,9 @@ func TestShouldProcessComment_BotGeneratedPatterns(t *testing.T) {
 	handler := &WebhookHandler{
 		config: WebhookConfig{
 			BitbucketUsername: "pr-bot",
-			TriggerKeyword:    "/review",
+			TriggeringEvents: []config.TriggeringEvent{
+				&config.CommentAddedEvent{Keyword: "/review"},
+			},
 		},
 		logger: &mockLogger{},
 	}
@@ -291,7 +296,9 @@ func TestShouldProcessComment_EdgeCases(t *testing.T) {
 	handler := &WebhookHandler{
 		config: WebhookConfig{
 			BitbucketUsername: "bot-user",
-			TriggerKeyword:    "/review",
+			TriggeringEvents: []config.TriggeringEvent{
+				&config.CommentAddedEvent{Keyword: "/review"},
+			},
 		},
 		logger: &mockLogger{},
 	}

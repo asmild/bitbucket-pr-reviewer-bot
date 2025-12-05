@@ -34,8 +34,7 @@ type TestPayload struct {
 type WebhookConfig struct {
 	WebhookSecret      string
 	AllowedProjectKeys []string
-	TriggerKeyword     string
-	EventType          string // "pr_opened" or "comment_added"
+	TriggeringEvents   []config.TriggeringEvent
 	BitbucketUsername  string
 }
 
@@ -134,7 +133,6 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	if !h.shouldProcessEvent(eventType) {
 		h.logger.Debug("Ignoring event type",
 			"event_type", eventType,
-			"configured_type", h.config.EventType,
 		)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Event type not configured for processing"))
@@ -212,24 +210,40 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 
 // shouldProcessEvent checks if the event type should be processed
 func (h *WebhookHandler) shouldProcessEvent(eventType string) bool {
-	// If no specific event type configured, accept all
-	if h.config.EventType == "" {
-		return true
-	}
-
-	// Map config format ("pr_opened") to Bitbucket format ("pr:opened")
-	switch h.config.EventType {
-	case config.EventTypePROpened:
-		return eventType == EventTypePROpened
-	case config.EventTypeCommentAdded:
-		return eventType == EventTypeCommentAdded
+	// Map Bitbucket event format ("pr:opened") to config format ("pr_opened")
+	var configEventType string
+	switch eventType {
+	case EventTypePROpened:
+		configEventType = config.EventTypePROpened
+	case EventTypeCommentAdded:
+		configEventType = config.EventTypeCommentAdded
 	default:
 		return false
 	}
+
+	// Check if this event type is in the configured triggering events
+	for _, event := range h.config.TriggeringEvents {
+		if event.GetType() == configEventType {
+			return true
+		}
+	}
+
+	return false
 }
 
 // shouldProcessComment checks if a comment should trigger a review
 func (h *WebhookHandler) shouldProcessComment(comment *models.Comment) bool {
+	// Get the trigger keyword from configured comment_added event
+	var triggerKeyword string
+	for _, event := range h.config.TriggeringEvents {
+		if event.GetType() == config.EventTypeCommentAdded {
+			if commentEvent, ok := event.(*config.CommentAddedEvent); ok {
+				triggerKeyword = commentEvent.Keyword
+			}
+			break
+		}
+	}
+
 	// Debug log the comment details before validation
 	h.logger.Debug("Processing comment",
 		"comment_id", comment.ID,
@@ -237,7 +251,7 @@ func (h *WebhookHandler) shouldProcessComment(comment *models.Comment) bool {
 		"author_display_name", comment.AuthorDisplayName,
 		"text_preview", truncateString(comment.Text, 100),
 		"bot_username", h.config.BitbucketUsername,
-		"trigger_keyword", h.config.TriggerKeyword,
+		"trigger_keyword", triggerKeyword,
 	)
 
 	// Check 1: Ignore comments from the bot itself to prevent infinite loops
@@ -270,10 +284,10 @@ func (h *WebhookHandler) shouldProcessComment(comment *models.Comment) bool {
 	}
 
 	// Check 4: Verify comment contains trigger keyword
-	hasTrigger := strings.Contains(comment.Text, h.config.TriggerKeyword)
+	hasTrigger := strings.Contains(comment.Text, triggerKeyword)
 	if !hasTrigger {
 		h.logger.Debug("Comment does not contain trigger keyword",
-			"trigger_keyword", h.config.TriggerKeyword,
+			"trigger_keyword", triggerKeyword,
 		)
 	}
 

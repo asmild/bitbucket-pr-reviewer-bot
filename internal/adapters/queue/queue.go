@@ -249,6 +249,13 @@ func (q *Queue) IsRunning() bool {
 	return q.running
 }
 
+// GetActiveWorkers returns the number of workers currently processing PRs
+func (q *Queue) GetActiveWorkers() int {
+	q.processingMu.Lock()
+	defer q.processingMu.Unlock()
+	return len(q.processing)
+}
+
 // worker processes items from the queue
 func (q *Queue) worker(ctx context.Context, workerID int) {
 	defer q.wg.Done()

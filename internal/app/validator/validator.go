@@ -137,13 +137,7 @@ func validateConfiguration(cfg *config.Config, result *ValidationResult) {
 		)
 	}
 
-	if !config.IsValidEventType(cfg.Bitbucket.EventType) {
-		result.AddError(
-			"Configuration",
-			fmt.Sprintf("Invalid event_type: %s", cfg.Bitbucket.EventType),
-			fmt.Sprintf("Set bitbucket.event_type to one of: %v", config.AllowedEventTypes),
-		)
-	}
+	// Event validation is now handled by config.Validate() which validates each TriggeringEvent
 
 	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
 		result.AddError(
