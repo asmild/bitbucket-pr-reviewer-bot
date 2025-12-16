@@ -65,7 +65,7 @@ bitbucket:
   allowed_project_keys:
     - PROJ1
     - PROJ2
-    -
+
   # Triggering events - bot will respond to any of these events
   # If not defined, defaults to: comment_added with keyword "/review"
   # Supported events:
