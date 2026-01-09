@@ -81,6 +81,7 @@ The implementation follows best practices, and the changes are ready to be merge
 ## Important Notes
 
 - **Always post inline comments first** before the summary comment
+- DO NOT leave any comments unless there is a clear issue, risk, or actionable suggestion.
 - Keep inline comments concise and actionable
 - Focus on critical issues (security, bugs) over style preferences
 - If a file has multiple issues, post separate inline comments for each

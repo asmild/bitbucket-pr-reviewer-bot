@@ -23,6 +23,13 @@ type MetricsCollector interface {
 	RecordCircuitBreakerState(state string)
 	IncrementCircuitBreakerTransition(from, to string)
 
+	// Cost/usage metrics
+	AddTokensUsed(projectKey, model string, inputTokens, outputTokens int)
+	AddCostUSD(projectKey, model string, costUSD float64)
+
+	// Review quality metrics
+	AddReviewIssues(projectKey string, critical, warning, suggestions int)
+
 	// Save and restore
 	Save(ctx context.Context) error
 	Restore(ctx context.Context) error

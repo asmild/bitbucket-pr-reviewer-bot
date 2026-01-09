@@ -67,6 +67,9 @@ type Application struct {
 
 	// Startup status
 	startupStatus *StartupStatus
+
+	// Metrics persistence cancel function
+	metricsSaveCancel context.CancelFunc
 }
 
 // Get returns the current startup status (thread-safe)
@@ -101,8 +104,18 @@ func New(cfg *config.Config) (*Application, error) {
 
 	log.Info("Initializing application")
 
-	// Initialize metrics collector
-	metricsCollector := metrics.NewCollector(log)
+	// Initialize metrics collector with persistence config
+	metricsCollector := metrics.NewCollector(log, metrics.PersistenceConfig{
+		Enabled:      cfg.Metrics.Persistence.Enabled,
+		Type:         cfg.Metrics.Persistence.Type,
+		Path:         cfg.Metrics.Persistence.Path,
+		SaveInterval: cfg.Metrics.Persistence.SaveInterval,
+	})
+
+	// Restore metrics from persistent storage
+	if err := metricsCollector.Restore(context.Background()); err != nil {
+		log.Warn("Failed to restore metrics from storage", "error", err)
+	}
 
 	// Initialize circuit breaker with metrics callback
 	circuitBreaker := circuitbreaker.NewBreaker(circuitbreaker.Config{
@@ -340,6 +353,16 @@ func (a *Application) startComponents(ctx context.Context) error {
 	a.queue.Start(ctx)
 	a.logger.Info("Queue workers started")
 
+	// Start periodic metrics saving if enabled
+	if a.config.Metrics.Persistence.Enabled && a.config.Metrics.Persistence.SaveInterval > 0 {
+		saveCtx, cancel := context.WithCancel(context.Background())
+		a.metricsSaveCancel = cancel
+		go a.periodicMetricsSave(saveCtx, a.config.Metrics.Persistence.SaveInterval)
+		a.logger.Info("Metrics periodic save started",
+			"interval", a.config.Metrics.Persistence.SaveInterval,
+		)
+	}
+
 	// Mark as fully running
 	a.startupStatus.SetStatus(StateRunning, "All components running", "")
 	a.logger.Info("Application fully started and ready")
@@ -347,9 +370,43 @@ func (a *Application) startComponents(ctx context.Context) error {
 	return nil
 }
 
+// periodicMetricsSave saves metrics periodically
+func (a *Application) periodicMetricsSave(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := a.metricsCollector.Save(ctx); err != nil {
+				a.logger.Warn("Failed to save metrics", "error", err)
+			}
+		}
+	}
+}
+
 // Stop gracefully stops the application
 func (a *Application) Stop(ctx context.Context) error {
 	a.logger.Info("Stopping application")
+
+	// Stop periodic metrics saving
+	if a.metricsSaveCancel != nil {
+		a.metricsSaveCancel()
+	}
+
+	// Final save of metrics before shutdown
+	if err := a.metricsCollector.Save(ctx); err != nil {
+		a.logger.Warn("Error saving metrics on shutdown", "error", err)
+	}
+
+	// Close metrics collector (closes persister)
+	if collector, ok := a.metricsCollector.(*metrics.Collector); ok {
+		if err := collector.Close(); err != nil {
+			a.logger.Warn("Error closing metrics collector", "error", err)
+		}
+	}
 
 	// Stop queue
 	if err := a.queue.Stop(ctx); err != nil {

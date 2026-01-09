@@ -12,11 +12,22 @@ type ReviewResult struct {
 	// Metrics extracted from the review
 	Metrics ReviewMetrics
 
+	// Usage/cost metrics from Claude
+	Usage UsageMetrics
+
 	// Execution metadata
 	StartTime    time.Time
 	EndTime      time.Time
 	Duration     time.Duration
 	ReviewerType string // e.g., "claude-sonnet-4"
+}
+
+// UsageMetrics contains token usage and cost information from Claude
+type UsageMetrics struct {
+	InputTokens  int
+	OutputTokens int
+	TotalTokens  int
+	CostUSD      float64
 }
 
 // ReviewMetrics contains structured metrics extracted from the review
@@ -70,4 +81,15 @@ func (r *ReviewResult) IsSuccessful() bool {
 // HasCriticalIssues returns true if critical issues were found
 func (r *ReviewResult) HasCriticalIssues() bool {
 	return r.Metrics.CriticalIssues > 0
+}
+
+// SetUsage sets the usage/cost metrics from Claude response
+func (r *ReviewResult) SetUsage(inputTokens, outputTokens int, costUSD float64) *ReviewResult {
+	r.Usage = UsageMetrics{
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		TotalTokens:  inputTokens + outputTokens,
+		CostUSD:      costUSD,
+	}
+	return r
 }
