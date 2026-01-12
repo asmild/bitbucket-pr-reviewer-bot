@@ -11,30 +11,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	// EventTypePROpened triggers review automatically when PR is opened
-	EventTypePROpened = "pr_opened"
-
-	// EventTypeCommentAdded triggers review when comment is added (with trigger keyword)
-	EventTypeCommentAdded = "comment_added"
-)
-
-// AllowedEventTypes contains all valid event types
-var AllowedEventTypes = []string{
-	EventTypePROpened,
-	EventTypeCommentAdded,
-}
-
-// IsValidEventType checks if the given event type is valid
-func IsValidEventType(eventType string) bool {
-	for _, allowed := range AllowedEventTypes {
-		if eventType == allowed {
-			return true
-		}
-	}
-	return false
-}
-
 // Config holds all application configuration
 type Config struct {
 	// Server configuration
@@ -75,14 +51,14 @@ type ClaudeConfig struct {
 }
 
 type BitbucketConfig struct {
-	SelfHosted         bool     `yaml:"self-hosted"`
-	BaseURL            string   `yaml:"base_url"`
-	User               string   `yaml:"user"`
-	Token              string   `yaml:"token"`
-	WebhookSecret      string   `yaml:"webhook_secret"`
-	AllowedProjectKeys []string `yaml:"allowed_project_keys"`
-	EventType          string   `yaml:"event_type"`
-	TriggerKeyword     string   `yaml:"trigger_keyword"`
+	SelfHosted         bool                 `yaml:"self-hosted"`
+	BaseURL            string               `yaml:"base_url"`
+	User               string               `yaml:"user"`
+	Token              string               `yaml:"token"`
+	WebhookSecret      string               `yaml:"webhook_secret"`
+	AllowedProjectKeys []string             `yaml:"allowed_project_keys"`
+	Events             []TriggeringEvent    `yaml:"-"` // Populated later
+	RawEvents          []RawTriggeringEvent `yaml:"triggering_events"`
 }
 
 type ProfilesConfig struct {
@@ -97,8 +73,9 @@ type ProjectProfile struct {
 }
 
 type QueueConfig struct {
-	MaxSize    int `yaml:"max_size"`
-	MaxRetries int `yaml:"max_retries"`
+	MaxSize     int `yaml:"max_size"`
+	MaxRetries  int `yaml:"max_retries"`
+	WorkerCount int `yaml:"concurrent_reviews"` // Number of PRs that can be reviewed in parallel
 }
 
 type CircuitBreakerConfig struct {
@@ -119,7 +96,7 @@ type MetricsPersistenceConfig struct {
 }
 
 type RateLimitConfig struct {
-	Enabled            bool `yaml:"enabled"`
+	Enabled           bool `yaml:"enabled"`
 	RequestsPerMinute int  `yaml:"requests_per_minute"`
 }
 
@@ -142,24 +119,18 @@ type LoggingConfig struct {
 // Environment variable mappings:
 // - BITBUCKET_SELF_HOSTED -> bitbucket.self-hosted
 // - BITBUCKET_BASE_URL -> bitbucket.base_url
-func Load() *Config {
-	// Find config file
-	configPath := FindConfigFile()
+func Load(configPath string) *Config {
+	cfg := getDefaultConfig()
+
+	// Find and load config file if path not provided
+	if configPath == "" {
+		configPath = FindConfigFile()
+	}
 
 	if configPath == "" {
 		log.Printf("Info: No config file found. Using defaults with environment variable overrides.")
 		log.Printf("Searched locations: %v", ConfigSearchPaths())
-	}
-
-	return LoadWithPath(configPath)
-}
-
-// LoadWithPath loads configuration from a specific YAML file path
-func LoadWithPath(configPath string) *Config {
-	cfg := getDefaultConfig()
-
-	// Try to load from YAML file if it exists and path is not empty
-	if configPath != "" {
+	} else {
 		if _, err := os.Stat(configPath); err == nil {
 			if err := loadYAML(configPath, cfg); err != nil {
 				log.Printf("Warning: Failed to load config from %s: %v. Using defaults with env overrides.", configPath, err)
@@ -175,6 +146,12 @@ func LoadWithPath(configPath string) *Config {
 	// Post-process configuration
 	cfg.Metrics.Persistence.SaveInterval = time.Duration(cfg.Metrics.Persistence.SaveIntervalMS) * time.Millisecond
 
+	// Process triggering events (convert RawEvents to Events)
+	if err := cfg.processTriggeringEvents(); err != nil {
+		log.Fatalf("Failed to process triggering events: %v", err)
+	}
+
+	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Configuration validation failed: %v", err)
 	}
@@ -196,8 +173,10 @@ func getDefaultConfig() *Config {
 			SelfHosted:         false,
 			BaseURL:            "",
 			AllowedProjectKeys: []string{},
-			EventType:          EventTypeCommentAdded,
-			TriggerKeyword:     "/review",
+			Events: []TriggeringEvent{
+				&CommentAddedEvent{Keyword: "/review"},
+			},
+			RawEvents: []RawTriggeringEvent{}, // Populated from config file or env vars
 		},
 		Profiles: ProfilesConfig{
 			Directory: "./profiles",
@@ -205,8 +184,9 @@ func getDefaultConfig() *Config {
 			Projects:  make(map[string]ProjectProfile),
 		},
 		Queue: QueueConfig{
-			MaxSize:    100,
-			MaxRetries: 3,
+			MaxSize:     100,
+			MaxRetries:  3,
+			WorkerCount: 1,
 		},
 		CircuitBreaker: CircuitBreakerConfig{
 			FailureThreshold: 3,
@@ -221,7 +201,7 @@ func getDefaultConfig() *Config {
 			},
 		},
 		RateLimit: RateLimitConfig{
-			Enabled:            false,
+			Enabled:           false,
 			RequestsPerMinute: 60,
 		},
 		Logging: LoggingConfig{
@@ -283,12 +263,9 @@ func applyEnvOverrides(cfg *Config) {
 	if projectKeys := os.Getenv("BITBUCKET_ALLOWED_PROJECT_KEYS"); projectKeys != "" {
 		cfg.Bitbucket.AllowedProjectKeys = parseCommaSeparated(projectKeys)
 	}
-	if eventType := os.Getenv("BITBUCKET_EVENT_TYPE"); eventType != "" {
-		cfg.Bitbucket.EventType = eventType
-	}
-	if keyword := os.Getenv("TRIGGER_KEYWORD"); keyword != "" {
-		cfg.Bitbucket.TriggerKeyword = keyword
-	}
+
+	// Apply triggering event overrides from environment variables
+	cfg.Bitbucket.RawEvents = applyEventOverridesFromEnv(cfg.Bitbucket.RawEvents)
 
 	// Queue overrides
 	if maxSize := getEnvAsInt("QUEUE_MAX_SIZE", 0); maxSize != 0 {
@@ -296,6 +273,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if maxRetries := getEnvAsInt("QUEUE_MAX_RETRIES", 0); maxRetries != 0 {
 		cfg.Queue.MaxRetries = maxRetries
+	}
+	if workerCount := getEnvAsInt("QUEUE_CONCURRENT_REVIEWS", 0); workerCount != 0 {
+		cfg.Queue.WorkerCount = workerCount
 	}
 
 	// Circuit breaker overrides
@@ -368,8 +348,12 @@ func (c *Config) Validate() error {
 	if c.Bitbucket.Token == "" {
 		return &ValidationError{Field: "bitbucket.token", Message: "is required"}
 	}
-	if !IsValidEventType(c.Bitbucket.EventType) {
-		return &ValidationError{Field: "bitbucket.event_type", Message: fmt.Sprintf("must be one of: %v", AllowedEventTypes)}
+
+	// Validate triggering events
+	for _, event := range c.Bitbucket.Events {
+		if err := event.Validate(); err != nil {
+			return fmt.Errorf("invalid %s event: %w", event.GetType(), err)
+		}
 	}
 	return nil
 }

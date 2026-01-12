@@ -65,15 +65,17 @@ bitbucket:
   allowed_project_keys:
     - PROJ1
     - PROJ2
-  # Or for a single project: allowed_project_keys: ["PROJ1"]
-  # Or to accept all: allowed_project_keys: []
-  # Event type to process: "pr_opened" or "comment_added" (default: comment_added)
-  # - pr_opened: Automatically review when PR is opened
-  # - comment_added: Review only when comment mentions user and contains trigger keyword
-  event_type: "comment_added"
-  # Trigger keyword for comment_added events (default: /review)
-  # Only used when event_type is "comment_added"
-  trigger_keyword: "/review"
+
+  # Triggering events - bot will respond to any of these events
+  # If not defined, defaults to: comment_added with keyword "/review"
+  # Supported events:
+  # - type: pr_opened - Triggers when PR is opened
+  # - type: comment_added - Triggers when comment contains keyword and mentions the bot
+  #   keyword: "<keyword>" - The keyword to trigger review
+  triggering_events:
+    - type: pr_opened
+    - type: comment_added
+      keyword: "/review"
 
 # Profiles configuration
 # Note: Profiles are markdown files containing AI review instructions

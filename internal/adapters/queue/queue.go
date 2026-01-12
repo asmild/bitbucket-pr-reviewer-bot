@@ -21,10 +21,9 @@ type Queue struct {
 	metrics        ports.MetricsCollector
 
 	// Queue state
-	items      []*queueItem
-	mu         sync.Mutex
-	processing bool
-	running    bool
+	items   []*queueItem
+	mu      sync.Mutex
+	running bool
 
 	// Channels
 	itemCh chan *queueItem
@@ -32,8 +31,11 @@ type Queue struct {
 	wg     sync.WaitGroup
 
 	// Configuration
-	maxRetries int
-	queueSize  int
+	maxRetries   int
+	queueSize    int
+	workerCount  int
+	processingMu sync.Mutex   // Protects processedItems set
+	processing   map[int]bool // Track which PR IDs are being processed
 }
 
 // queueItem represents an item in the queue
@@ -46,8 +48,35 @@ type queueItem struct {
 
 // Config holds queue configuration
 type Config struct {
-	MaxRetries int
-	QueueSize  int // Maximum number of items in the queue
+	MaxRetries  int
+	QueueSize   int // Maximum number of items in the queue
+	WorkerCount int // Number of concurrent workers (default: 1)
+}
+
+// updateReaction is a helper method that calls the package-level updateReaction function
+func (q *Queue) updateReaction(pr *models.PullRequest, oldEmoji, newEmoji string) {
+	if !pr.IsManualTrigger() || pr.CommentID == 0 {
+		return
+	}
+
+	// Remove old reaction if specified
+	if oldEmoji != "" {
+		if err := q.vcsClient.RemoveCommentReaction(context.Background(), pr.ProjectKey, pr.RepositorySlug, pr.ID, pr.CommentID, oldEmoji); err != nil {
+			q.logger.Debug("Failed to remove old reaction (might not exist)",
+				"old_emoji", oldEmoji,
+				"comment_id", pr.CommentID,
+			)
+		}
+	}
+
+	// Add new reaction
+	if err := q.vcsClient.AddCommentReaction(context.Background(), pr.ProjectKey, pr.RepositorySlug, pr.ID, pr.CommentID, newEmoji); err != nil {
+		q.logger.Warn("Failed to add reaction",
+			"emoji", newEmoji,
+			"pr_id", pr.ID,
+			"error", err,
+		)
+	}
 }
 
 // NewQueue creates a new review queue
@@ -65,6 +94,9 @@ func NewQueue(
 	if cfg.QueueSize == 0 {
 		cfg.QueueSize = 100
 	}
+	if cfg.WorkerCount == 0 {
+		cfg.WorkerCount = 1
+	}
 
 	return &Queue{
 		reviewService:  reviewService,
@@ -77,6 +109,8 @@ func NewQueue(
 		stopCh:         make(chan struct{}),
 		maxRetries:     cfg.MaxRetries,
 		queueSize:      cfg.QueueSize,
+		workerCount:    cfg.WorkerCount,
+		processing:     make(map[int]bool),
 		running:        false,
 	}
 }
@@ -85,6 +119,9 @@ func NewQueue(
 func (q *Queue) Enqueue(ctx context.Context, pr *models.PullRequest) (int, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
+	// Add "queued" reaction if manual trigger
+	q.updateReaction(pr, "", "QUEUED")
 
 	if !q.running {
 		return 0, errors.ErrQueueClosed
@@ -99,14 +136,8 @@ func (q *Queue) Enqueue(ctx context.Context, pr *models.PullRequest) (int, error
 			"max_size", q.queueSize,
 		)
 
-		// Add emoji reaction if manual trigger
-		if pr.IsManualTrigger() {
-			q.wg.Add(1)
-			go func(pr *models.PullRequest) {
-				defer q.wg.Done()
-				q.addReactionAsync(ctx, pr, "X")
-			}(pr)
-		}
+		// Add failed reaction if manual trigger
+		q.updateReaction(pr, "", "FAILED")
 
 		return 0, errors.ErrQueueFull
 	}
@@ -144,21 +175,7 @@ func (q *Queue) Enqueue(ctx context.Context, pr *models.PullRequest) (int, error
 	return position, nil
 }
 
-// addReactionAsync adds an emoji reaction asynchronously (fire and forget)
-func (q *Queue) addReactionAsync(ctx context.Context, pr *models.PullRequest, emoji string) {
-	if pr.CommentID == 0 {
-		return
-	}
-
-	if err := q.vcsClient.AddCommentReaction(ctx, pr.ProjectKey, pr.RepositorySlug, pr.ID, pr.CommentID, emoji); err != nil {
-		q.logger.Warn("Failed to add queue full reaction",
-			"pr_id", pr.ID,
-			"error", err,
-		)
-	}
-}
-
-// Start starts the queue worker
+// Start starts the queue workers
 func (q *Queue) Start(ctx context.Context) {
 	q.mu.Lock()
 	if q.running {
@@ -168,13 +185,19 @@ func (q *Queue) Start(ctx context.Context) {
 	q.running = true
 	q.mu.Unlock()
 
-	q.logger.Info("Starting queue worker")
+	q.logger.Info("Starting queue workers",
+		"worker_count", q.workerCount,
+	)
 
-	q.wg.Add(1)
-	go q.worker(ctx)
+	// Start multiple workers
+	for i := 0; i < q.workerCount; i++ {
+		workerID := i + 1
+		q.wg.Add(1)
+		go q.worker(ctx, workerID)
+	}
 }
 
-// Stop immediately stops the queue worker
+// Stop immediately stops the queue workers
 // Items in progress are abandoned - reviews can be re-run safely
 func (q *Queue) Stop(ctx context.Context) error {
 	q.mu.Lock()
@@ -185,7 +208,9 @@ func (q *Queue) Stop(ctx context.Context) error {
 	q.running = false
 	q.mu.Unlock()
 
-	q.logger.Info("Stopping queue worker immediately")
+	q.logger.Info("Stopping queue workers immediately",
+		"worker_count", q.workerCount,
+	)
 
 	// Close stopCh to signal all goroutines to stop
 	close(q.stopCh)
@@ -199,9 +224,11 @@ func (q *Queue) Stop(ctx context.Context) error {
 
 	select {
 	case <-done:
-		q.logger.Info("Queue worker stopped cleanly")
+		q.logger.Info("Queue workers stopped cleanly")
 	case <-time.After(1 * time.Second):
-		q.logger.Warn("Queue worker shutdown timeout (1s) - forcing stop")
+		q.logger.Warn("Queue workers shutdown timeout (1s) - forcing stop",
+			"worker_count", q.workerCount,
+		)
 		// Goroutines will be killed when process exits
 	}
 
@@ -222,31 +249,45 @@ func (q *Queue) IsRunning() bool {
 	return q.running
 }
 
+// GetActiveWorkers returns the number of workers currently processing PRs
+func (q *Queue) GetActiveWorkers() int {
+	q.processingMu.Lock()
+	defer q.processingMu.Unlock()
+	return len(q.processing)
+}
+
 // worker processes items from the queue
-func (q *Queue) worker(ctx context.Context) {
+func (q *Queue) worker(ctx context.Context, workerID int) {
 	defer q.wg.Done()
 
-	q.logger.Info("Queue worker started")
+	q.logger.Info("Queue worker started",
+		"worker_id", workerID,
+	)
 
 	for {
 		select {
 		case item := <-q.itemCh:
-			q.processItem(ctx, item)
+			q.processItem(ctx, item, workerID)
 		case <-q.stopCh:
-			q.logger.Info("Queue worker received stop signal")
+			q.logger.Info("Queue worker received stop signal",
+				"worker_id", workerID,
+			)
 			return
 		case <-ctx.Done():
-			q.logger.Info("Queue worker context cancelled")
+			q.logger.Info("Queue worker context cancelled",
+				"worker_id", workerID,
+			)
 			return
 		}
 	}
 }
 
 // processItem processes a single queue item
-func (q *Queue) processItem(ctx context.Context, item *queueItem) {
-	q.mu.Lock()
-	q.processing = true
-	q.mu.Unlock()
+func (q *Queue) processItem(ctx context.Context, item *queueItem, workerID int) {
+	// Mark PR as being processed
+	q.processingMu.Lock()
+	q.processing[item.pr.ID] = true
+	q.processingMu.Unlock()
 
 	defer func() {
 		// Recover from panic to prevent worker crash
@@ -256,6 +297,7 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem) {
 				"pr_id", item.pr.ID,
 				"project", item.pr.ProjectKey,
 				"repo", item.pr.RepositorySlug,
+				"worker_id", workerID,
 			)
 
 			// Post failure comment about panic
@@ -264,17 +306,16 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem) {
 				q.logger.Error("Failed to post panic recovery comment", "error", err)
 			}
 
-			// Add error reaction if manual trigger
-			if item.pr.IsManualTrigger() {
-				q.vcsClient.RemoveCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "PROCESSING")
-				q.vcsClient.AddCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "X")
-			}
+			q.updateReaction(item.pr, "PROCESSING", "FAILED")
 		}
 
-		q.mu.Lock()
-		q.processing = false
+		// Mark PR as no longer being processed
+		q.processingMu.Lock()
+		delete(q.processing, item.pr.ID)
+		q.processingMu.Unlock()
 
 		// Remove item from queue
+		q.mu.Lock()
 		if len(q.items) > 0 {
 			q.items = q.items[1:]
 			q.metrics.ObserveQueueSize(len(q.items))
@@ -285,19 +326,14 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem) {
 	item.lastAttempt = time.Now()
 
 	q.logger.Info("Processing PR from queue",
+		"worker_id", workerID,
 		"project", item.pr.ProjectKey,
 		"repo", item.pr.RepositoryID,
 		"pr_id", item.pr.ID,
 		"retry_count", item.retryCount,
 	)
 
-	// Add processing reaction if manual trigger
-	if item.pr.IsManualTrigger() {
-		go func() {
-			q.vcsClient.RemoveCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "CLOCK2")
-			q.vcsClient.AddCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "PROCESSING")
-		}()
-	}
+	q.updateReaction(item.pr, "QUEUED", "PROCESSING")
 
 	// Check if circuit breaker is open
 	if q.circuitBreaker.IsOpen() {
@@ -322,13 +358,7 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem) {
 			"project", item.pr.ProjectKey,
 			"pr_id", item.pr.ID,
 		)
-		// Add success reaction if manual trigger
-		if item.pr.IsManualTrigger() {
-			go func() {
-				q.vcsClient.RemoveCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "PROCESSING")
-				q.vcsClient.AddCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "WHITE_CHECK_MARK")
-			}()
-		}
+		q.updateReaction(item.pr, "PROCESSING", "SUCCESS")
 	}
 }
 
@@ -355,14 +385,7 @@ func (q *Queue) handleProcessingError(ctx context.Context, item *queueItem, err 
 			"retry_count", item.retryCount,
 		)
 
-		// Add error reaction if manual trigger
-		if item.pr.IsManualTrigger() {
-			go func() {
-				q.vcsClient.RemoveCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "PROCESSING")
-				q.vcsClient.AddCommentReaction(ctx, item.pr.ProjectKey, item.pr.RepositorySlug, item.pr.ID, item.pr.CommentID, "X")
-			}()
-		}
-
+		q.updateReaction(item.pr, "PROCESSING", "FAILED")
 		q.postFailureComment(ctx, item, err)
 	}
 }

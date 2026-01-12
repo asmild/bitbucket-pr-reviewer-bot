@@ -63,6 +63,12 @@ Connects the bot to your Bitbucket Data Center instance.
 
 ```yaml
 bitbucket:
+  self-hosted: true  # (default: true)
+  # Set to true if using Bitbucket Data Center / Server
+
+  base_url: "http://bitbucket.example.com"  # (required if self-hosted)
+  # Base URL of your Bitbucket instance
+
   user: "bot-username"  # (required)
   # Bitbucket username or email of the bot account
 
@@ -74,47 +80,55 @@ bitbucket:
   # Improves security by verifying webhook authenticity
 
   allowed_project_keys:  # (optional, default: all projects)
-    - CI
-    - INFRA
+    - PROJ1
+    - PROJ2
   # Restrict bot to specific projects
   # Leave empty or remove to accept all projects
 
-  event_type: "comment_added"  # (default: comment_added)
-  # "pr_opened" - Automatically review when PR is opened
-  # "comment_added" - Review only when comment mentions the bot
+  triggering_events:  # (default: comment_added with keyword "/review")
+    # Defines which events trigger the bot to review a PR
+    # Multiple events can be configured
 
-  trigger_keyword: "/review"  # (default: /review)
-  # Keyword to trigger review (used with comment_added event type)
-  # Example: User comments "@bot-username /review"
+    - type: pr_opened
+      # Automatically review when PR is opened
+
+    - type: comment_added
+      keyword: "/review"
+      # Review when comment contains keyword and mentions the bot
+      # Example: User comments "@bot-username /review"
 ```
 
 **Environment Variables:**
+- `BITBUCKET_SELF_HOSTED` - Whether using self-hosted Bitbucket (true/false)
+- `BITBUCKET_BASE_URL` - Base URL of Bitbucket instance (required if self-hosted)
 - `BITBUCKET_USER` - Bitbucket username
 - `BITBUCKET_TOKEN` - App password/token
 - `BITBUCKET_WEBHOOK_SECRET` - Webhook secret
-- `BITBUCKET_ALLOWED_PROJECT_KEYS` - Comma-separated project keys (e.g., "CI,INFRA,DEV")
-- `BITBUCKET_EVENT_TYPE` - Event type to process
-- `TRIGGER_KEYWORD` - Trigger keyword for reviews
+- `BITBUCKET_ALLOWED_PROJECT_KEYS` - Comma-separated project keys (e.g., "PROJ1,PROJ2")
+- `BITBUCKET_EVENT_TYPE` - Single event type (for backward compatibility)
+- `TRIGGER_KEYWORD` - Trigger keyword for reviews (used with comment_added)
 
 ### Profiles Configuration
 
-Manages PR review profiles (which select the template to use) and customization per project/repository.
+Manages PR review profiles and customization per project/repository.
 
 ```yaml
 profiles:
-  directory: ./templates  # (default: ./templates)
-  # Path to templates directory relative to working directory
-  # Note: The directory is still called "templates" in the filesystem
+  directory: ./profiles  # (default: ./profiles)
+  # Base directory where profile .md files are located
 
   default: default  # (default: default)
-  # Default profile folder name for projects not explicitly configured
+  # Default profile name without .md extension
+  # Corresponds to ./profiles/default.md
 
   projects:  # (optional)
-    # Project-specific profile configuration
+    # Per-project profile configurations
     CI:
-      profile: strict-review  # Applied to all repos in CI project
+      profile: custom  # Applied to all repos in CI project
+      # Corresponds to ./profiles/custom.md
       repositories:
         critical-repo: critical-review  # Override for specific repo
+        # Corresponds to ./profiles/critical-review.md
         important-repo: important-review
 
     INFRA:
@@ -123,7 +137,7 @@ profiles:
         network-config: security-review
 
     DEV:
-      # Can have just repo-level overrides
+      # Can have just repo-level overrides without project-level profile
       repositories:
         experimental: lenient-review
 ```
@@ -137,14 +151,34 @@ profiles:
 If no project configuration exists for a repository, the global `default` profile is used.
 
 **Environment Variables:**
-- `PROFILES_DIRECTORY` - Profiles directory path (also accepts `TEMPLATES_DIRECTORY` for backward compatibility)
-- `PROFILES_DEFAULT` - Default profile name
+- `PROFILES_DIRECTORY` - Profiles directory path
+- `PROFILES_DEFAULT` - Default profile name (without .md extension)
 
 **Note:** Profile projects/repositories are configured only through YAML, not environment variables.
 
-**Terminology Clarification:**
-- **Profiles** (in config) - Select which template to use for a specific project/repository
-- **Templates** (in filesystem) - The actual `prompt.md` files stored in `./templates/` directory
+**Profile File Structure:**
+- Each profile is a markdown file (`.md`) in the profiles directory
+- Example: `default` profile → `./profiles/default.md`
+- The profile file contains AI review instructions
+
+### Queue Configuration
+
+Controls PR review queue behavior to manage concurrent processing and retries.
+
+```yaml
+queue:
+  max_size: 100  # (default: 100)
+  # Maximum number of PRs in queue
+  # When full, new PRs will be rejected with 503 error
+  # Manual triggers (@bot review) will get emoji reaction
+
+  max_retries: 3  # (default: 3)
+  # Maximum retry attempts for failed reviews
+```
+
+**Environment Variables:**
+- `QUEUE_MAX_SIZE` - Maximum queue size
+- `QUEUE_MAX_RETRIES` - Maximum retry attempts
 
 ### Circuit Breaker Configuration
 
@@ -205,6 +239,24 @@ metrics:
 - `METRICS_PERSISTENCE_PATH` - Storage path
 - `METRICS_PERSISTENCE_SAVE_INTERVAL_MS` - Save interval in milliseconds
 
+### Rate Limiting Configuration
+
+Controls webhook request rate limiting to protect the bot from being overwhelmed.
+
+```yaml
+rate_limit:
+  enabled: false  # (default: false)
+  # Enable rate limiting for webhook processing
+
+  requests_per_minute: 60  # (default: 60)
+  # Maximum number of webhook requests per minute
+  # When limit is exceeded, webhooks are rejected with 429 Too Many Requests
+```
+
+**Environment Variables:**
+- `RATE_LIMIT_ENABLED` - Enable/disable rate limiting (true/false)
+- `RATE_LIMIT_REQUESTS_PER_MINUTE` - Maximum requests per minute
+
 ### Logging Configuration
 
 Controls application logging behavior.
@@ -249,15 +301,18 @@ export PORT=9000
 export CLAUDE_MODEL=opus
 
 # Override Bitbucket settings
+export BITBUCKET_SELF_HOSTED=true
+export BITBUCKET_BASE_URL=http://bitbucket.example.com
 export BITBUCKET_USER=review-bot
 export BITBUCKET_TOKEN=mytoken
 export BITBUCKET_WEBHOOK_SECRET=mysecret
 
 # Override project keys (comma-separated)
-export BITBUCKET_ALLOWED_PROJECT_KEYS=CI,INFRA
+export BITBUCKET_ALLOWED_PROJECT_KEYS=PROJ1,PROJ2
 
-# Override event type
+# Override event type (for backward compatibility)
 export BITBUCKET_EVENT_TYPE=pr_opened
+export TRIGGER_KEYWORD="/review"
 
 # Override profiles
 export PROFILES_DIRECTORY=/custom/templates/path
@@ -273,7 +328,8 @@ The application validates required configuration on startup:
 
 - `bitbucket.user` - Must be set (YAML or env var)
 - `bitbucket.token` - Must be set (YAML or env var)
-- `bitbucket.event_type` - Must be either "pr_opened" or "comment_added"
+- `bitbucket.base_url` - Must be set if `bitbucket.self-hosted` is true
+- `triggering_events` - Must contain valid event types ("pr_opened" or "comment_added")
 
 If validation fails, the application logs an error and exits with status code 1.
 
@@ -310,10 +366,10 @@ profiles:
   default: default
   projects:
     CI:
-      profile: strict-review
+      profile: custom
       repositories:
-        backend: backend-review
-        frontend: frontend-review
+        critical-repo: critical-review
+        important-repo: important-review
 ```
 
 ### Scenario 2: Multiple Projects with Defaults
@@ -323,7 +379,7 @@ profiles:
   default: default
   projects:
     CI:
-      profile: standard-review
+      profile: custom
     INFRA:
       profile: infrastructure-review
     DEV:
@@ -334,17 +390,30 @@ profiles:
 
 ```yaml
 bitbucket:
-  event_type: "pr_opened"
-  # No trigger_keyword needed when using pr_opened
+  triggering_events:
+    - type: pr_opened
+  # Automatically reviews all opened PRs
 ```
 
 ### Scenario 4: Manual Review via Comments
 
 ```yaml
 bitbucket:
-  event_type: "comment_added"
-  trigger_keyword: "@bot /review"
-  # Users comment: "@bot /review" to trigger review
+  triggering_events:
+    - type: comment_added
+      keyword: "/review"
+  # Users comment with "/review" to trigger review
+```
+
+### Scenario 5: Both Automatic and Manual Triggers
+
+```yaml
+bitbucket:
+  triggering_events:
+    - type: pr_opened
+    - type: comment_added
+      keyword: "/review"
+  # Reviews on PR open AND when users comment "/review"
 ```
 
 ## Troubleshooting
@@ -353,13 +422,14 @@ bitbucket:
 
 Check the startup logs:
 - Validate `bitbucket.user` and `bitbucket.token` are set
-- Verify `bitbucket.event_type` is valid
+- Verify `bitbucket.base_url` is set if using self-hosted Bitbucket
+- Verify `triggering_events` contains valid event types
 - Check directory paths exist
 
-### Profiles/Templates Not Found
+### Profiles Not Found
 
 - Verify `profiles.directory` path is correct
-- Ensure template folders contain `prompt.md` file
+- Ensure profile `.md` files exist (e.g., `default.md`)
 - Check file permissions
 
 ### Environment Variables Not Applied

@@ -35,13 +35,13 @@ build-windows-amd64:
 
 # Build optimized cross-platform binaries
 build: build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64
-	@echo "Build complete! Optimized binaries in build/ directory"
+	@echo "Build complete! Optimized binaries in bin/ directory"
 
 # Build for local development
 build-local:
 	@echo "Building bb-pr-reviewer for local platform..."
-	@CGO_ENABLED=1 go build -o ./bin/bb-pr-reviewer ./cmd/server/main.go
-	@echo "Build complete: bb-pr-reviewer"
+	@CGO_ENABLED=1 go build -o ./bin/bb-pr-reviewer-local ./cmd/server/main.go
+	@echo "Build complete: bin/bb-pr-reviewer-local"
 
 # Run the application
 run:

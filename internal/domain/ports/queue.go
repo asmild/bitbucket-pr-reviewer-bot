@@ -22,4 +22,7 @@ type ReviewQueue interface {
 
 	// IsRunning returns true if the queue is running
 	IsRunning() bool
+
+	// GetActiveWorkers returns the number of workers currently processing PRs
+	GetActiveWorkers() int
 }

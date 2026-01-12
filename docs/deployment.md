@@ -224,15 +224,31 @@ The application will check:
 
 **Example successful output:**
 ```
-✓ Claude CLI: claude-cli v1.2.3
-✓ Claude CLI authentication verified
-✓ git version 2.39.0
-✓ Profiles: Found default profile at ./profiles/default.md
-✓ Git base directory: ./projects (writable)
-✓ Logs directory: ./logs (writable)
-All startup dependency checks passed
-
-Application started successfully - ready to process webhooks
+2025/11/28 12:14:40 Starting Bitbucket PR Reviewer Bot...
+2025/11/28 12:14:40 Info: Loaded configuration from config.yaml
+time=2025-11-28T12:14:40.971+01:00 level=INFO msg="Initializing application"
+time=2025-11-28T12:14:40.971+01:00 level=INFO msg="Initializing Bitbucket Data Center adapter"
+time=2025-11-28T12:14:40.972+01:00 level=INFO msg="Application initialized successfully"
+time=2025-11-28T12:14:40.972+01:00 level=INFO msg="Running startup dependency checks..."
+time=2025-11-28T12:14:48.332+01:00 level=INFO msg="✓ Bitbucket: Data Center / Server (base URL: https://bitbucket.example.com)"
+time=2025-11-28T12:14:48.332+01:00 level=INFO msg="✓ VCS credentials: Valid (authenticated as p1ciclaudeagent)"
+time=2025-11-28T12:14:48.332+01:00 level=INFO msg="✓ Claude CLI: 2.0.54 (Claude Code)"
+time=2025-11-28T12:14:48.332+01:00 level=INFO msg="✓ Claude CLI is authenticated"
+time=2025-11-28T12:14:48.332+01:00 level=INFO msg="✓ Bitbucket MCP server is configured"
+time=2025-11-28T12:14:48.332+01:00 level=INFO msg="✓ git version 2.50.1 (Apple Git-155)"
+time=2025-11-28T12:14:48.332+01:00 level=INFO msg="✓ Profiles: Found default profile at profiles/default.md"
+time=2025-11-28T12:14:48.332+01:00 level=INFO msg="✓ Git base directory: ./projects (writable)"
+time=2025-11-28T12:14:48.332+01:00 level=INFO msg="✓ Logs directory: ./logs (writable)"
+time=2025-11-28T12:14:48.332+01:00 level=INFO msg="All startup dependency checks passed"
+time=2025-11-28T12:14:48.332+01:00 level=INFO msg=""
+time=2025-11-28T12:14:48.332+01:00 level=INFO msg="Starting application" port=9090
+time=2025-11-28T12:14:48.332+01:00 level=INFO msg="Starting HTTP server" address=:9090
+time=2025-11-28T12:14:48.434+01:00 level=INFO msg="HTTP server started successfully"
+time=2025-11-28T12:14:48.434+01:00 level=INFO msg="Starting queue workers" worker_count=3
+time=2025-11-28T12:14:48.434+01:00 level=INFO msg="Application started successfully - ready to process webhooks"
+time=2025-11-28T12:14:48.434+01:00 level=INFO msg="Queue worker started" worker_id=1
+time=2025-11-28T12:14:48.434+01:00 level=INFO msg="Queue worker started" worker_id=2
+time=2025-11-28T12:14:48.434+01:00 level=INFO msg="Queue worker started" worker_id=3
 ```
 
 **If validation fails**, the application will exit with clear error messages showing exactly what needs to be fixed.

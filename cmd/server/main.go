@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/app"
-	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/app/validator"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/config"
 )
 
@@ -19,11 +18,7 @@ func main() {
 	// Load configuration
 	configPath := os.Getenv("CONFIG_PATH")
 	var cfg *config.Config
-	if configPath != "" {
-		cfg = config.LoadWithPath(configPath)
-	} else {
-		cfg = config.Load()
-	}
+	cfg = config.Load(configPath)
 
 	// Create application
 	application, err := app.New(cfg)
@@ -33,24 +28,11 @@ func main() {
 
 	logger := application.GetLogger()
 
-	// Validate startup dependencies
-	validationResult := validator.ValidateStartup(cfg, logger, application.GetVCSClient())
-	validationResult.LogResults(logger)
-
-	if !validationResult.IsValid() {
-		logger.Fatal("Startup validation failed - exiting")
-	}
-
-	logger.Info("All startup dependency checks passed")
-	logger.Info("")
-
-	// Start application
+	// Start application (HTTP server, validation, workers - all handled internally)
 	ctx := context.Background()
 	if err := application.Start(ctx); err != nil {
 		logger.Fatal("Failed to start application")
 	}
-
-	logger.Info("Application started successfully - ready to process webhooks")
 
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)

@@ -76,7 +76,7 @@ func (r *ValidationResult) LogResults(logger ports.Logger) {
 func ValidateStartup(cfg *config.Config, logger ports.Logger, vcsClient ports.VCSClient) *ValidationResult {
 	result := &ValidationResult{}
 
-	logger.Info("Running startup dependency checks...")
+	logger.Info("Running startup checks...")
 
 	// Check configuration
 	validateConfiguration(cfg, result)
@@ -107,9 +107,9 @@ func ValidateStartup(cfg *config.Config, logger ports.Logger, vcsClient ports.VC
 func validateConfiguration(cfg *config.Config, result *ValidationResult) {
 	// Log Bitbucket platform type
 	if cfg.Bitbucket.SelfHosted {
-		result.AddInfo(fmt.Sprintf("✓ Bitbucket: Data Center / Server (base URL: %s)", cfg.Bitbucket.BaseURL))
+		result.AddInfo(fmt.Sprintf("[OK] Bitbucket: Data Center / Server (base URL: %s)", cfg.Bitbucket.BaseURL))
 	} else {
-		result.AddInfo("✓ Bitbucket: Cloud")
+		result.AddInfo("[OK] Bitbucket: Cloud")
 	}
 
 	if cfg.Bitbucket.User == "" {
@@ -137,13 +137,7 @@ func validateConfiguration(cfg *config.Config, result *ValidationResult) {
 		)
 	}
 
-	if !config.IsValidEventType(cfg.Bitbucket.EventType) {
-		result.AddError(
-			"Configuration",
-			fmt.Sprintf("Invalid event_type: %s", cfg.Bitbucket.EventType),
-			fmt.Sprintf("Set bitbucket.event_type to one of: %v", config.AllowedEventTypes),
-		)
-	}
+	// Event validation is now handled by config.Validate() which validates each TriggeringEvent
 
 	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
 		result.AddError(
@@ -195,7 +189,7 @@ func validateVCSCredentials(cfg *config.Config, vcsClient ports.VCSClient, resul
 	}
 
 	// Successfully authenticated
-	result.AddInfo(fmt.Sprintf("✓ VCS credentials: Valid (authenticated as %s)", cfg.Bitbucket.User))
+	result.AddInfo(fmt.Sprintf("[OK] VCS credentials: Valid (authenticated as %s)", cfg.Bitbucket.User))
 }
 
 // validateClaudeCLI checks if Claude CLI is installed and accessible
@@ -225,7 +219,7 @@ func validateClaudeCLI(result *ValidationResult) {
 
 	// Success - log version info
 	version := strings.TrimSpace(string(output))
-	result.AddInfo(fmt.Sprintf("✓ Claude CLI: %s", version))
+	result.AddInfo(fmt.Sprintf("[OK] Claude CLI: %s", version))
 
 	// Check Claude authentication
 	validateClaudeAuth(result)
@@ -261,7 +255,7 @@ func validateGit(result *ValidationResult) {
 
 	// Success - log version info
 	version := strings.TrimSpace(string(output))
-	result.AddInfo(fmt.Sprintf("✓ %s", version))
+	result.AddInfo(fmt.Sprintf("[OK] %s", version))
 }
 
 // validateProfiles checks profiles directory and default profile
@@ -308,7 +302,7 @@ func validateProfiles(cfg *config.Config, result *ValidationResult, logger ports
 	}
 
 	// Success
-	result.AddInfo(fmt.Sprintf("✓ Profiles: Found default profile at %s", defaultProfilePath))
+	result.AddInfo(fmt.Sprintf("[OK] Profiles: Found default profile at %s", defaultProfilePath))
 
 	// Check configured project profiles (non-fatal warnings)
 	validateProjectProfiles(cfg, logger)
@@ -346,7 +340,7 @@ func validateDirectories(cfg *config.Config, result *ValidationResult) {
 			fmt.Sprintf("Check permissions: chmod 755 %s or create directory: mkdir -p %s", gitBaseDir, gitBaseDir),
 		)
 	} else {
-		result.AddInfo(fmt.Sprintf("✓ Git base directory: %s (writable)", gitBaseDir))
+		result.AddInfo(fmt.Sprintf("[OK] Git base directory: %s (writable)", gitBaseDir))
 	}
 
 	// Check logs directory (if file logging is enabled)
@@ -359,7 +353,7 @@ func validateDirectories(cfg *config.Config, result *ValidationResult) {
 				fmt.Sprintf("Create directory: mkdir -p %s && chmod 755 %s", logsDir, logsDir),
 			)
 		} else {
-			result.AddInfo(fmt.Sprintf("✓ Logs directory: %s (writable)", logsDir))
+			result.AddInfo(fmt.Sprintf("[OK] Logs directory: %s (writable)", logsDir))
 		}
 	}
 }
@@ -433,7 +427,7 @@ func validateClaudeAuth(result *ValidationResult) {
 		return
 	}
 
-	result.AddInfo("✓ Claude CLI is authenticated")
+	result.AddInfo("[OK] Claude CLI is authenticated")
 }
 
 // validateBitbucketMCP checks if Bitbucket MCP is configured in Claude Code
@@ -488,5 +482,5 @@ func validateBitbucketMCP(result *ValidationResult) {
 		return
 	}
 
-	result.AddInfo("✓ Bitbucket MCP server is configured")
+	result.AddInfo("[OK] Bitbucket MCP server is configured")
 }
