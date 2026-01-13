@@ -135,7 +135,6 @@ metrics:
     path: ./metrics-storage
     # Interval to save metrics in milliseconds (default: 30000)
     save_interval_ms: 30000
-
 # Rate limiting configuration
 rate_limit:
   # Enable rate limiting for webhook processing (default: false)

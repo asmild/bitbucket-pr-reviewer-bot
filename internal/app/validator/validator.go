@@ -3,6 +3,7 @@ package validator
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -99,6 +100,11 @@ func ValidateStartup(cfg *config.Config, logger ports.Logger, vcsClient ports.VC
 
 	// Check directory permissions
 	validateDirectories(cfg, result)
+
+	// Check persistent storage (reachable, readable, writable) if enabled
+	if cfg.Metrics.Persistence.Enabled {
+		validatePersistentStorage(cfg, result)
+	}
 
 	return result
 }
@@ -333,7 +339,7 @@ func validateProjectProfiles(cfg *config.Config, logger ports.Logger) {
 func validateDirectories(cfg *config.Config, result *ValidationResult) {
 	// Check git base directory - using hardcoded "./projects" for now
 	gitBaseDir := "./projects"
-	if err := ensureDirectoryWritable(gitBaseDir); err != nil {
+	if err := checkDirWritable(gitBaseDir); err != nil {
 		result.AddError(
 			"Directories",
 			fmt.Sprintf("Cannot write to git directory: %s", gitBaseDir),
@@ -346,7 +352,7 @@ func validateDirectories(cfg *config.Config, result *ValidationResult) {
 	// Check logs directory (if file logging is enabled)
 	if cfg.Logging.EnableFile {
 		logsDir := "./logs"
-		if err := ensureDirectoryWritable(logsDir); err != nil {
+		if err := checkDirWritable(logsDir); err != nil {
 			result.AddError(
 				"Directories",
 				fmt.Sprintf("Cannot write to logs directory: %s", logsDir),
@@ -358,26 +364,119 @@ func validateDirectories(cfg *config.Config, result *ValidationResult) {
 	}
 }
 
-// ensureDirectoryWritable checks if directory is writable, creates if doesn't exist
-func ensureDirectoryWritable(dir string) error {
-	// Check if directory exists
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		// Try to create it
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
-		}
+// checkDirWritable validates that directory exists and is writable
+func checkDirWritable(dir string) error {
+	info, err := os.Stat(dir)
+	if os.IsNotExist(err) {
+		return fmt.Errorf("does not exist")
+	}
+	if err != nil {
+		return fmt.Errorf("cannot access: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("not a directory")
 	}
 
-	// Check write permission by creating a temp file
 	testFile := filepath.Join(dir, ".write-test")
 	f, err := os.Create(testFile)
 	if err != nil {
-		return fmt.Errorf("directory is not writable: %w", err)
+		return fmt.Errorf("not writable: %w", err)
 	}
-	f.Close()
-	os.Remove(testFile)
+	_ = f.Close()
+	_ = os.Remove(testFile)
 
 	return nil
+}
+
+// validatePersistentStorage checks if persistent storage is reachable, readable, and writable
+func validatePersistentStorage(cfg *config.Config, result *ValidationResult) {
+	storagePath := cfg.Metrics.Persistence.Path
+	storageType := cfg.Metrics.Persistence.Type
+
+	switch storageType {
+	case "filesystem":
+		validateFilesystemStorage(storagePath, result)
+	case "sqlite":
+		validateSQLiteStorage(storagePath, result)
+	default:
+		result.AddError(
+			"Persistent Storage",
+			fmt.Sprintf("Unknown persistence type: %s", storageType),
+			"Set metrics.persistence.type to 'filesystem' or 'sqlite' in config.yaml",
+		)
+	}
+}
+
+// validateFilesystemStorage checks filesystem-based storage is reachable, readable, and writable
+func validateFilesystemStorage(storagePath string, result *ValidationResult) {
+	if err := checkDirWritable(storagePath); err != nil {
+		result.AddError(
+			"Persistent Storage",
+			fmt.Sprintf("Storage directory not accessible: %s - %v", storagePath, err),
+			fmt.Sprintf("Create directory manually: mkdir -p %s && chmod 755 %s", storagePath, storagePath),
+		)
+		return
+	}
+	result.AddInfo(fmt.Sprintf("✓ Persistent storage: %s (filesystem) - reachable, readable, writable", storagePath))
+}
+
+// validateSQLiteStorage checks SQLite database is reachable, readable, and writable
+func validateSQLiteStorage(storagePath string, result *ValidationResult) {
+	// Determine directory to check - if path has extension, it's a file path
+	dir := storagePath
+	if filepath.Ext(storagePath) != "" {
+		dir = filepath.Dir(storagePath)
+	}
+
+	if err := checkDirWritable(dir); err != nil {
+		result.AddError(
+			"Persistent Storage",
+			fmt.Sprintf("Storage directory not accessible: %s - %v", dir, err),
+			fmt.Sprintf("Create directory manually: mkdir -p %s && chmod 755 %s", dir, dir),
+		)
+		return
+	}
+
+	// Test database read/write using the metrics table (already initialized by metrics collector)
+	dbPath := storagePath
+	if filepath.Ext(storagePath) == "" {
+		dbPath = filepath.Join(storagePath, "metrics.db")
+	}
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		result.AddError(
+			"Persistent Storage",
+			fmt.Sprintf("Cannot open SQLite database: %s - %v", dbPath, err),
+			"Check SQLite installation and file permissions",
+		)
+		return
+	}
+	defer db.Close()
+
+	testName := "_storage_validation_test"
+	if _, err := db.Exec(`INSERT OR REPLACE INTO metrics (name, labels_json, value) VALUES (?, '{}', 1)`, testName); err != nil {
+		result.AddError(
+			"Persistent Storage",
+			fmt.Sprintf("SQLite write test failed: %s - %v", dbPath, err),
+			"Check file permissions and disk space",
+		)
+		return
+	}
+
+	var value float64
+	if err := db.QueryRow(`SELECT value FROM metrics WHERE name = ?`, testName).Scan(&value); err != nil {
+		result.AddError(
+			"Persistent Storage",
+			fmt.Sprintf("SQLite read test failed: %s - %v", dbPath, err),
+			"Check database integrity",
+		)
+		return
+	}
+
+	_, _ = db.Exec(`DELETE FROM metrics WHERE name = ?`, testName)
+
+	result.AddInfo(fmt.Sprintf("✓ Persistent storage: %s (sqlite) - reachable, readable, writable", storagePath))
 }
 
 // validateClaudeAuth checks if Claude CLI is authenticated

@@ -64,7 +64,7 @@ func (r *Reviewer) Review(ctx context.Context, request *ports.ReviewRequest) (*m
 	defer cancel()
 
 	// Execute Claude CLI
-	output, err := r.executeClaude(reviewCtx, request)
+	execResult, err := r.executeClaude(reviewCtx, request)
 	if err != nil {
 		result.Complete()
 
@@ -82,7 +82,7 @@ func (r *Reviewer) Review(ctx context.Context, request *ports.ReviewRequest) (*m
 	}
 
 	// Extract metrics from output
-	reviewMetrics, err := r.extractMetrics(output)
+	reviewMetrics, err := r.extractMetrics(execResult.Result)
 	if err != nil {
 		r.logger.Warn("Failed to extract metrics from Claude output",
 			"error", err,
@@ -91,16 +91,23 @@ func (r *Reviewer) Review(ctx context.Context, request *ports.ReviewRequest) (*m
 	}
 
 	// Set result
-	result.Comment = output
+	result.Comment = execResult.Result
 	if reviewMetrics != nil {
 		result.WithMetrics(*reviewMetrics)
 	}
+
+	// Set cost/usage metrics from Claude response (store full precision)
+	result.SetUsage(execResult.Usage.InputTokens, execResult.Usage.OutputTokens, execResult.CostUSD)
+
 	result.Complete()
 
 	r.logger.Info("AI review completed",
 		"model", r.modelName,
 		"duration", result.Duration,
 		"pr_id", request.PullRequest.ID,
+		"input_tokens", execResult.Usage.InputTokens,
+		"output_tokens", execResult.Usage.OutputTokens,
+		"cost_usd", execResult.CostUSD,
 	)
 
 	return result, nil
@@ -130,13 +137,31 @@ func (r *Reviewer) IsAvailable(ctx context.Context) error {
 	return nil
 }
 
+// claudeJSONResponse represents the JSON output from Claude CLI
+type claudeJSONResponse struct {
+	Result     string      `json:"result"`
+	IsError    bool        `json:"is_error"`
+	CostUSD    float64     `json:"total_cost_usd"`
+	DurationMS int64       `json:"duration_ms"`
+	NumTurns   int         `json:"num_turns"`
+	Usage      claudeUsage `json:"usage"`
+}
+
+// claudeUsage represents token usage from Claude CLI
+type claudeUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+}
+
 // executeClaude executes the Claude CLI with the given prompt
-func (r *Reviewer) executeClaude(ctx context.Context, request *ports.ReviewRequest) (string, error) {
-	// Prepare command
+func (r *Reviewer) executeClaude(ctx context.Context, request *ports.ReviewRequest) (*claudeJSONResponse, error) {
+	// Prepare command with JSON output format for cost tracking
 	cmd := exec.CommandContext(ctx, "claude",
 		"--dangerously-skip-permissions",
 		"--model", r.modelName,
-		"--output-format", "text",
+		"--output-format", "json",
 	)
 	cmd.Dir = request.RepositoryPath
 
@@ -158,7 +183,7 @@ func (r *Reviewer) executeClaude(ctx context.Context, request *ports.ReviewReque
 			r.logger.Warn("Claude CLI execution timed out",
 				"duration", duration,
 			)
-			return "", ctx.Err()
+			return nil, ctx.Err()
 		}
 
 		stdoutStr := stdout.String()
@@ -173,10 +198,32 @@ func (r *Reviewer) executeClaude(ctx context.Context, request *ports.ReviewReque
 		)
 
 		// Include both outputs in error message for debugging
-		return "", fmt.Errorf("claude execution failed: %w, stdout: %s, stderr: %s", err, stdoutStr, stderrStr)
+		return nil, fmt.Errorf("claude execution failed: %w, stdout: %s, stderr: %s", err, stdoutStr, stderrStr)
 	}
 
-	return stdout.String(), nil
+	// Parse JSON response
+	var response claudeJSONResponse
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		r.logger.Warn("Failed to parse Claude JSON response, falling back to raw output",
+			"error", err,
+		)
+		// Fallback to raw output if JSON parsing fails
+		return &claudeJSONResponse{
+			Result: stdout.String(),
+		}, nil
+	}
+
+	if response.IsError {
+		return nil, fmt.Errorf("claude returned error: %s", response.Result)
+	}
+
+	r.logger.Debug("Claude execution completed",
+		"input_tokens", response.Usage.InputTokens,
+		"output_tokens", response.Usage.OutputTokens,
+		"cost_usd", response.CostUSD,
+	)
+
+	return &response, nil
 }
 
 // extractMetrics extracts metrics from Claude output

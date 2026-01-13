@@ -73,7 +73,7 @@ func (s *ReviewService) ReviewPullRequest(ctx context.Context, pr *models.PullRe
 	}()
 
 	// Perform the review (Claude will post comments via MCP)
-	_, err := s.performReview(ctx, pr)
+	result, err := s.performReview(ctx, pr)
 	if err != nil {
 		s.handleReviewError(ctx, pr, err)
 		return err
@@ -83,6 +83,13 @@ func (s *ReviewService) ReviewPullRequest(ctx context.Context, pr *models.PullRe
 	duration := time.Since(startTime)
 	s.metrics.IncrementReviewCompleted(pr.ProjectKey, "success")
 	s.metrics.ObserveReviewDuration(pr.ProjectKey, duration)
+
+	// Record cost/usage and review quality metrics
+	if result != nil {
+		s.metrics.AddTokensUsed(pr.ProjectKey, result.ReviewerType, result.Usage.InputTokens, result.Usage.OutputTokens)
+		s.metrics.AddCostUSD(pr.ProjectKey, result.ReviewerType, result.Usage.CostUSD)
+		s.metrics.AddReviewIssues(pr.ProjectKey, result.Metrics.CriticalIssues, result.Metrics.WarningIssues, result.Metrics.SuggestionCount)
+	}
 
 	s.logger.Info("PR review completed successfully",
 		"project", pr.ProjectKey,
