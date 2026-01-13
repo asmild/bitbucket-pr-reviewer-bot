@@ -14,7 +14,7 @@ define build_binary
 	$(eval ARCH_SUFFIX := $(if $(filter windows,$(GOOS)),,-$(GOARCH)))
 	$(eval OUTPUT := ./bin/bb-pr-reviewer-$(GOOS)$(ARCH_SUFFIX)$(VERSION_SUFFIX)$(EXT))
 	@echo "Building $(OUTPUT)..."
-	@CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(LDFLAGS) -o $(OUTPUT) ./cmd/server/main.go
+	@CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(LDFLAGS) -o $(OUTPUT) ./cmd/server/main.go
 endef
 
 # Individual platform build targets
