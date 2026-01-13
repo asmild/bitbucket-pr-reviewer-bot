@@ -14,6 +14,7 @@ import (
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/config"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/errors"
 	"github.com/asmild/bitbucket-pr-reviewer-bot/internal/domain/ports"
+	_ "modernc.org/sqlite"
 )
 
 // ValidationError represents a startup validation error
@@ -443,7 +444,7 @@ func validateSQLiteStorage(storagePath string, result *ValidationResult) {
 		dbPath = filepath.Join(storagePath, "metrics.db")
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		result.AddError(
 			"Persistent Storage",

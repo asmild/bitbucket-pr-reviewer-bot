@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // SQLitePersister implements Persister using SQLite
@@ -22,7 +22,7 @@ func NewSQLitePersister(path string) (*SQLitePersister, error) {
 		return nil, err
 	}
 
-	db, err := sql.Open("sqlite3", resolved)
+	db, err := sql.Open("sqlite", resolved)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
 	}
