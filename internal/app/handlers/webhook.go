@@ -127,8 +127,6 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.metrics.IncrementWebhookReceived(eventType)
-
 	// Check if we should process this event type (early return)
 	if !h.shouldProcessEvent(eventType) {
 		h.logger.Debug("Ignoring event type",
@@ -167,6 +165,9 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		// Set comment ID for manual trigger
 		pr = pr.WithCommentID(comment.ID)
 	}
+
+	// Increment webhook metric only for valid, processed events
+	h.metrics.IncrementWebhookReceived(eventType)
 
 	// Log webhook details for debugging
 	h.logger.Debug("Webhook received",
