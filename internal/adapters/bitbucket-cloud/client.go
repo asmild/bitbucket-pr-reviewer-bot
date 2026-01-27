@@ -46,7 +46,28 @@ func NewClient(cfg Config, logger ports.Logger) *Client {
 
 // PostComment posts a comment on a pull request. If parentCommentID > 0, posts as a reply to that comment.
 func (c *Client) PostComment(ctx context.Context, projectKey, repoSlug string, prID int, comment string, parentCommentID int) error {
-	return fmt.Errorf("bitbucket cloud adapter: PostComment not implemented")
+	_, err := c.PostCommentWithID(ctx, projectKey, repoSlug, prID, comment, parentCommentID)
+	return err
+}
+
+// PostCommentWithID posts a comment and returns the created comment ID.
+// TODO: Implement for Bitbucket Cloud
+func (c *Client) PostCommentWithID(ctx context.Context, projectKey, repoSlug string, prID int, comment string, parentCommentID int) (int, error) {
+	return 0, fmt.Errorf("bitbucket cloud adapter: PostCommentWithID not implemented")
+}
+
+// UpdateComment updates an existing comment on a pull request.
+// TODO: Implement for Bitbucket Cloud
+func (c *Client) UpdateComment(ctx context.Context, projectKey, repoSlug string, prID, commentID, version int, text string) error {
+	c.logger.Warn("Bitbucket Cloud UpdateComment not implemented - skipping")
+	return nil // Don't error out, just skip
+}
+
+// DeleteComment deletes a comment from a pull request.
+// TODO: Implement for Bitbucket Cloud
+func (c *Client) DeleteComment(ctx context.Context, projectKey, repoSlug string, prID, commentID, version int) error {
+	c.logger.Warn("Bitbucket Cloud DeleteComment not implemented - skipping")
+	return nil // Don't error out, just skip
 }
 
 // AddCommentReaction adds an emoji reaction to a comment

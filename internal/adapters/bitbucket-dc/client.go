@@ -53,8 +53,20 @@ func NewClient(cfg Config, logger ports.Logger) *Client {
 	}
 }
 
+// commentResponse represents the response from posting a comment
+type commentResponse struct {
+	ID int `json:"id"`
+}
+
 // PostComment posts a comment on a pull request. If parentCommentID > 0, posts as a reply to that comment.
+// This is a convenience wrapper around PostCommentWithID that discards the returned comment ID.
 func (c *Client) PostComment(ctx context.Context, projectKey, repoSlug string, prID int, comment string, parentCommentID int) error {
+	_, err := c.PostCommentWithID(ctx, projectKey, repoSlug, prID, comment, parentCommentID)
+	return err
+}
+
+// PostCommentWithID posts a comment and returns the created comment ID.
+func (c *Client) PostCommentWithID(ctx context.Context, projectKey, repoSlug string, prID int, comment string, parentCommentID int) (int, error) {
 	url := fmt.Sprintf("%s/rest/api/1.0/projects/%s/repos/%s/pull-requests/%d/comments",
 		c.baseURL, projectKey, repoSlug, prID)
 
@@ -71,7 +83,7 @@ func (c *Client) PostComment(ctx context.Context, projectKey, repoSlug string, p
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return errors.Wrap(errors.ErrorCodeVCSAPIError,
+		return 0, errors.Wrap(errors.ErrorCodeVCSAPIError,
 			"failed to marshal comment payload",
 			err,
 		)
@@ -92,7 +104,7 @@ func (c *Client) PostComment(ctx context.Context, projectKey, repoSlug string, p
 		)
 	}
 
-	_, err = c.post(ctx, url, payloadBytes)
+	respBody, err := c.post(ctx, url, payloadBytes)
 	if err != nil {
 		domainErr := errors.Wrap(errors.ErrorCodeVCSAPIError,
 			"failed to post comment",
@@ -105,7 +117,16 @@ func (c *Client) PostComment(ctx context.Context, projectKey, repoSlug string, p
 			domainErr.WithMetadata("parent_comment_id", parentCommentID)
 		}
 
-		return domainErr
+		return 0, domainErr
+	}
+
+	// Parse response to get comment ID
+	var resp commentResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		c.logger.Warn("Failed to parse comment response, comment was posted but ID unknown",
+			"error", err,
+		)
+		return 0, nil
 	}
 
 	if parentCommentID > 0 {
@@ -113,13 +134,92 @@ func (c *Client) PostComment(ctx context.Context, projectKey, repoSlug string, p
 			"project", projectKey,
 			"pr_id", prID,
 			"parent_comment_id", parentCommentID,
+			"comment_id", resp.ID,
 		)
 	} else {
 		c.logger.Debug("Successfully posted comment to PR",
 			"project", projectKey,
 			"pr_id", prID,
+			"comment_id", resp.ID,
 		)
 	}
+
+	return resp.ID, nil
+}
+
+// UpdateComment updates an existing comment on a pull request.
+func (c *Client) UpdateComment(ctx context.Context, projectKey, repoSlug string, prID, commentID, version int, text string) error {
+	url := fmt.Sprintf("%s/rest/api/1.0/projects/%s/repos/%s/pull-requests/%d/comments/%d",
+		c.baseURL, projectKey, repoSlug, prID, commentID)
+
+	payload := map[string]interface{}{
+		"text":    text,
+		"version": version,
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return errors.Wrap(errors.ErrorCodeVCSAPIError,
+			"failed to marshal comment update payload",
+			err,
+		)
+	}
+
+	c.logger.Debug("Updating comment",
+		"project", projectKey,
+		"repo", repoSlug,
+		"pr_id", prID,
+		"comment_id", commentID,
+	)
+
+	_, err = c.put(ctx, url, payloadBytes)
+	if err != nil {
+		return errors.Wrap(errors.ErrorCodeVCSAPIError,
+			"failed to update comment",
+			err,
+		).WithMetadata("project", projectKey).
+			WithMetadata("repo", repoSlug).
+			WithMetadata("pr_id", prID).
+			WithMetadata("comment_id", commentID)
+	}
+
+	c.logger.Debug("Successfully updated comment",
+		"project", projectKey,
+		"pr_id", prID,
+		"comment_id", commentID,
+	)
+
+	return nil
+}
+
+// DeleteComment deletes a comment from a pull request.
+func (c *Client) DeleteComment(ctx context.Context, projectKey, repoSlug string, prID, commentID, version int) error {
+	url := fmt.Sprintf("%s/rest/api/1.0/projects/%s/repos/%s/pull-requests/%d/comments/%d?version=%d",
+		c.baseURL, projectKey, repoSlug, prID, commentID, version)
+
+	c.logger.Debug("Deleting comment",
+		"project", projectKey,
+		"repo", repoSlug,
+		"pr_id", prID,
+		"comment_id", commentID,
+	)
+
+	err := c.delete(ctx, url)
+	if err != nil {
+		return errors.Wrap(errors.ErrorCodeVCSAPIError,
+			"failed to delete comment",
+			err,
+		).WithMetadata("project", projectKey).
+			WithMetadata("repo", repoSlug).
+			WithMetadata("pr_id", prID).
+			WithMetadata("comment_id", commentID)
+	}
+
+	c.logger.Debug("Successfully deleted comment",
+		"project", projectKey,
+		"pr_id", prID,
+		"comment_id", commentID,
+	)
 
 	return nil
 }

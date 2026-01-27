@@ -40,11 +40,19 @@ type Queue struct {
 
 // queueItem represents an item in the queue
 type queueItem struct {
-	pr          *models.PullRequest
-	queuedAt    time.Time
-	retryCount  int
-	lastAttempt time.Time
+	pr              *models.PullRequest
+	queuedAt        time.Time
+	retryCount      int
+	lastAttempt     time.Time
+	statusCommentID int // For automatic triggers: ID of the status comment
+	commentVersion  int // Version for updating/deleting the status comment
 }
+
+// Status comment messages for automatic triggers
+const (
+	statusMsgQueued     = "⏳ **Review queued.** Your PR is in the queue and will be reviewed shortly."
+	statusMsgProcessing = "👀 **Reviewing...** Claude Code is analyzing your code changes."
+)
 
 // Config holds queue configuration
 type Config struct {
@@ -77,6 +85,100 @@ func (q *Queue) updateReaction(pr *models.PullRequest, oldEmoji, newEmoji string
 			"error", err,
 		)
 	}
+}
+
+// postStatusComment posts a status comment for automatic triggers and returns the comment ID
+func (q *Queue) postStatusComment(item *queueItem, message string) {
+	if item.pr.IsManualTrigger() {
+		return
+	}
+
+	commentID, err := q.vcsClient.PostCommentWithID(
+		context.Background(),
+		item.pr.ProjectKey,
+		item.pr.RepositorySlug,
+		item.pr.ID,
+		message,
+		0, // No parent comment
+	)
+	if err != nil {
+		q.logger.Warn("Failed to post status comment",
+			"pr_id", item.pr.ID,
+			"error", err,
+		)
+		return
+	}
+
+	item.statusCommentID = commentID
+	item.commentVersion = 0 // Initial version
+
+	q.logger.Debug("Posted status comment",
+		"pr_id", item.pr.ID,
+		"comment_id", commentID,
+	)
+}
+
+// updateStatusComment updates the status comment for automatic triggers
+func (q *Queue) updateStatusComment(item *queueItem, message string) {
+	if item.pr.IsManualTrigger() || item.statusCommentID == 0 {
+		return
+	}
+
+	err := q.vcsClient.UpdateComment(
+		context.Background(),
+		item.pr.ProjectKey,
+		item.pr.RepositorySlug,
+		item.pr.ID,
+		item.statusCommentID,
+		item.commentVersion,
+		message,
+	)
+	if err != nil {
+		q.logger.Warn("Failed to update status comment",
+			"pr_id", item.pr.ID,
+			"comment_id", item.statusCommentID,
+			"error", err,
+		)
+		return
+	}
+
+	item.commentVersion++ // Increment version for next update
+
+	q.logger.Debug("Updated status comment",
+		"pr_id", item.pr.ID,
+		"comment_id", item.statusCommentID,
+	)
+}
+
+// deleteStatusComment deletes the status comment for automatic triggers
+func (q *Queue) deleteStatusComment(item *queueItem) {
+	if item.pr.IsManualTrigger() || item.statusCommentID == 0 {
+		return
+	}
+
+	err := q.vcsClient.DeleteComment(
+		context.Background(),
+		item.pr.ProjectKey,
+		item.pr.RepositorySlug,
+		item.pr.ID,
+		item.statusCommentID,
+		item.commentVersion,
+	)
+	if err != nil {
+		q.logger.Warn("Failed to delete status comment",
+			"pr_id", item.pr.ID,
+			"comment_id", item.statusCommentID,
+			"error", err,
+		)
+		return
+	}
+
+	q.logger.Debug("Deleted status comment",
+		"pr_id", item.pr.ID,
+		"comment_id", item.statusCommentID,
+	)
+
+	item.statusCommentID = 0
 }
 
 // NewQueue creates a new review queue
@@ -147,6 +249,9 @@ func (q *Queue) Enqueue(ctx context.Context, pr *models.PullRequest) (int, error
 		queuedAt:   time.Now(),
 		retryCount: 0,
 	}
+
+	// Post status comment for automatic triggers
+	q.postStatusComment(item, statusMsgQueued)
 
 	q.items = append(q.items, item)
 	position := len(q.items)
@@ -307,6 +412,7 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem, workerID int) 
 			}
 
 			q.updateReaction(item.pr, "PROCESSING", "FAILED")
+			q.deleteStatusComment(item)
 		}
 
 		// Mark PR as no longer being processed
@@ -334,6 +440,7 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem, workerID int) 
 	)
 
 	q.updateReaction(item.pr, "QUEUED", "PROCESSING")
+	q.updateStatusComment(item, statusMsgProcessing)
 
 	// Check if circuit breaker is open
 	if q.circuitBreaker.IsOpen() {
@@ -359,6 +466,7 @@ func (q *Queue) processItem(ctx context.Context, item *queueItem, workerID int) 
 			"pr_id", item.pr.ID,
 		)
 		q.updateReaction(item.pr, "PROCESSING", "SUCCESS")
+		q.deleteStatusComment(item) // Remove status comment on success
 	}
 }
 
@@ -386,6 +494,7 @@ func (q *Queue) handleProcessingError(ctx context.Context, item *queueItem, err 
 		)
 
 		q.updateReaction(item.pr, "PROCESSING", "FAILED")
+		q.deleteStatusComment(item)
 		q.postFailureComment(ctx, item, err)
 	}
 }
