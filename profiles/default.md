@@ -100,23 +100,43 @@ If any comment failed to post, retry posting it.
 
 ---
 
-## Final Step: Output Metrics
+## Final Step: Output Metrics (CRITICAL)
 
-After posting all comments, you MUST output a JSON block for metrics tracking in this exact format:
+After posting all comments to Bitbucket, you **MUST** output a JSON metrics block to stdout. This is separate from the Bitbucket comments - it's for the bot to track statistics.
+
+**IMPORTANT**: This JSON block must appear in your final text response, NOT as a Bitbucket comment. Write it directly as text output after all MCP tool calls are complete.
+
+Output this exact format:
 
 ```json
 {
   "isLgtm": true/false,
-  "issueCount": <number>,
-  "isReviewFailed": true/false,
-  "failedReviewReason": "<error description or null>"
+  "criticalIssues": <number>,
+  "warningIssues": <number>,
+  "suggestionCount": <number>,
+  "isReviewFailed": false,
+  "failedReviewReason": null
 }
 ```
 
-Where:
+Field definitions:
 - `isLgtm`: true if no issues found, false if issues were identified
-- `issueCount`: exact number of issues found (0 if LGTM)
-- `isReviewFailed`: true if the review process failed (e.g., Bitbucket MCP connection failed, network issues, failed to send comments to Bitbucket, etc.), false if review completed successfully
-- `failedReviewReason`: description of why the review failed (null if isReviewFailed is false)
+- `criticalIssues`: count of critical issues (security vulnerabilities, bugs causing crashes/data loss)
+- `warningIssues`: count of warnings (potential bugs, performance problems, error handling gaps)
+- `suggestionCount`: count of suggestions (best practices, code style, minor improvements)
+- `isReviewFailed`: true only if the review process itself failed (MCP errors, network issues)
+- `failedReviewReason`: error description if failed, otherwise null
 
-This JSON must be the last thing in your response.
+**Example for a review with 2 security issues, 3 bugs, and 1 suggestion:**
+```json
+{
+  "isLgtm": false,
+  "criticalIssues": 2,
+  "warningIssues": 3,
+  "suggestionCount": 1,
+  "isReviewFailed": false,
+  "failedReviewReason": null
+}
+```
+
+This JSON block is required for metrics tracking and must be your final output.

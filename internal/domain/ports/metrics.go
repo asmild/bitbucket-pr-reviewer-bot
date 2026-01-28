@@ -33,6 +33,9 @@ type MetricsCollector interface {
 	// Save and restore
 	Save(ctx context.Context) error
 	Restore(ctx context.Context) error
+
+	// Close releases resources
+	Close() error
 }
 
 // HealthChecker defines the interface for health checking
